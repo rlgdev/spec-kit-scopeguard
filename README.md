@@ -55,8 +55,8 @@ specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scope
 specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.1.0/scopeguard-preset.zip
 ```
 
-Use `releases/latest/download/...` instead of `releases/download/v0.1.0/...` to always get the
-newest release.
+Spec Kit asks you to confirm installs from a URL; answer `y`. Use `releases/latest/download/...`
+instead of `releases/download/v0.1.0/...` to always get the newest release.
 
 <details>
 <summary>Install through a catalog (for teams)</summary>
@@ -200,7 +200,7 @@ specify → plan → tasks → implement workflow with shell-step scope gates in
 stops at the first gap. Fix the plan and run `specify workflow resume <run_id>`.
 
 ```bash
-specify workflow add --from https://raw.githubusercontent.com/rlgdev/spec-kit-scopeguard/main/workflows/scopeguard-sdd/workflow.yml
+specify workflow add scopeguard-sdd --from https://raw.githubusercontent.com/rlgdev/spec-kit-scopeguard/main/workflows/scopeguard-sdd/workflow.yml
 specify workflow run scopeguard-sdd -i spec="..."
 # Windows: add -i scopeguard="pwsh -File .specify/extensions/scopeguard/scripts/powershell/scopeguard.ps1"
 ```
