@@ -300,7 +300,8 @@ def load_config(root: Path, explicit: Optional[str]) -> Tuple[Dict[str, Any], Li
 def read_text(path: Path) -> str:
     data = path.read_bytes()
     text = data.decode("utf-8-sig", errors="replace")
-    return text.replace("\r\n", "\n").replace("\r", "\n")
+    # CRLF, doubled CR (CRLF re-converted by a tool) and lone CR all become LF.
+    return re.sub(r"\r+\n", "\n", text).replace("\r", "\n")
 
 
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.S)

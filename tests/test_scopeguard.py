@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 ENGINE = REPO / "scripts" / "python" / "scopeguard.py"
 EXAMPLE = REPO / "examples" / "missing-story" / "specs" / "001-team-board"
@@ -468,9 +470,12 @@ def test_out_markdown_and_append(tmp_path):
     assert out.read_text(encoding="utf-8").count("scopeGuard - plan gate") == 2
 
 
-def test_crlf_bom_and_unicode(tmp_path):
-    spec = "\ufeff" + SPEC.replace("Browse catalog", "Przeglądaj katalog – żółć").replace("\n", "\r\n")
-    make_feature(tmp_path, spec=spec, plan=plan_with(FULL_ROWS).replace("\n", "\r\n"))
+@pytest.mark.parametrize("eol", ["\r\n", "\r\r\n"])
+def test_crlf_bom_and_unicode(tmp_path, eol):
+    fd = make_feature(tmp_path)
+    spec = "\ufeff" + SPEC.replace("Browse catalog", "Przeglądaj katalog – żółć")
+    (fd / "spec.md").write_bytes(spec.replace("\n", eol).encode("utf-8"))
+    (fd / "plan.md").write_bytes(plan_with(FULL_ROWS).replace("\n", eol).encode("utf-8"))
     proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--verbose")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "Przeglądaj katalog" in proc.stdout

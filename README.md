@@ -183,7 +183,7 @@ Use it as a GitHub Action. It fails the job when any feature in `specs/` has a s
 writes the report to the job summary:
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v5
 - uses: rlgdev/spec-kit-scopeguard@v0.1.0
   with:
     command: check        # check | plan | tasks | implement | report
