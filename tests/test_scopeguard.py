@@ -133,7 +133,7 @@ def run_cli(root: Path, *args: str, env: dict | None = None):
 
 def gate(root: Path, name: str, *extra: str):
     proc = run_cli(root, name, "--json", "--feature-dir", "specs/001-demo", *extra)
-    assert proc.returncode in (0, 1, 2), proc.stderr
+    assert proc.returncode in (0, 1, 2, 3), proc.stderr
     data = json.loads(proc.stdout)
     return proc.returncode, data
 
@@ -518,3 +518,77 @@ def test_bad_config_is_exit_2(tmp_path):
     cfg.write_text("mode: strict\n", encoding="utf-8")
     code, data = gate(tmp_path, "plan", "--config", str(cfg))
     assert code == 2 and data["verdict"] == "error"
+
+
+# --------------------------------------------------------------------------- resolution loop
+
+
+def test_spec_excerpt_is_attached_to_items(tmp_path):
+    fd = make_feature(tmp_path, spec=SPEC.replace("### User Story 3 – Pay with card (Priority: P3)\n\nText.",
+                                                   "### User Story 3 – Pay with card (Priority: P3)\n\nPay by card.\n\n1. **Given** a basket, **When** paying, **Then** it works."))
+    config, _ = sg.load_config(tmp_path, None)
+    model = sg.parse_spec(fd / "spec.md", sg.IdScheme(config), config)
+    assert model.items["US3"].excerpt.startswith("### User Story 3")
+    assert "**When** paying" in model.items["US3"].excerpt
+    assert "Requirements" not in model.items["US3"].excerpt
+    assert model.items["FR-3"].excerpt == "- **FR-003**: System MUST accept card payments."
+
+
+def test_iteration_loop_escalates_after_max_iterations(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3")]
+    fd = make_feature(tmp_path, plan=plan_with(rows))
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--iteration", "0")
+    assert proc.returncode == 1
+    assert "RESOLVE" in proc.stdout and "> ### User Story 3" in proc.stdout
+    assert "re-run this gate with --iteration 1" in proc.stdout
+    for i in (1, 2, 3):
+        code, data = gate(tmp_path, "plan", "--iteration", str(i))
+        assert code == 1 and data["gates"][0]["next_iteration"] == i + 1 and not data["gates"][0]["escalated"]
+    code, data = gate(tmp_path, "plan", "--iteration", "4")
+    assert code == 3
+    assert data["verdict"] == "escalate"
+    g = data["gates"][0]
+    assert g["escalated"] and g["escalation_report"] == "specs/001-demo/scopeguard-escalation-plan.md"
+    assert items(data)["US3"]["spec_excerpt"].startswith("### User Story 3")
+    report = (fd / "scopeguard-escalation-plan.md").read_text(encoding="utf-8")
+    assert "### US3 - Pay with card (P3)" in report
+    assert "TODO(agent)" in report and "| 4 | 1 | US3 |" in report
+    history = json.loads((fd / ".scopeguard" / "history-plan.json").read_text(encoding="utf-8"))
+    assert [e["iteration"] for e in history["iterations"]] == [0, 1, 2, 3, 4]
+
+
+def test_resolving_clears_stale_escalation_and_resets_history(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3")]
+    fd = make_feature(tmp_path, plan=plan_with(rows))
+    code, _ = gate(tmp_path, "plan", "--iteration", "4")
+    assert code == 3 and (fd / "scopeguard-escalation-plan.md").is_file()
+    (fd / "plan.md").write_text(plan_with(FULL_ROWS), encoding="utf-8")
+    code, data = gate(tmp_path, "plan", "--iteration", "0")
+    assert code == 0 and data["gates"][0]["next_iteration"] is None
+    assert not (fd / "scopeguard-escalation-plan.md").exists()
+    history = json.loads((fd / ".scopeguard" / "history-plan.json").read_text(encoding="utf-8"))
+    assert [e["iteration"] for e in history["iterations"]] == [0]
+
+
+def test_max_iterations_config_and_no_escalation_without_iteration(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3")]
+    make_feature(tmp_path, plan=plan_with(rows))
+    code, _ = gate(tmp_path, "plan")  # CI / manual: plain violation
+    assert code == 1
+    cfg = tmp_path / "cfg.yml"
+    cfg.write_text("remediation:\n  max_iterations: 2\n", encoding="utf-8")
+    code, _ = gate(tmp_path, "plan", "--config", str(cfg), "--iteration", "1")
+    assert code == 1
+    code, _ = gate(tmp_path, "plan", "--config", str(cfg), "--iteration", "2")
+    assert code == 3
+    code, _ = gate(tmp_path, "plan", "--config", str(cfg), "--iteration", "2", "--report-only")
+    assert code == 0
+
+
+def test_tasks_gate_escalation_report(tmp_path):
+    tasks = TASKS.split("## Phase 5")[0]
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS), tasks=tasks)
+    code, data = gate(tmp_path, "tasks", "--iteration", "4")
+    assert code == 3
+    report = (fd / "scopeguard-escalation-tasks.md").read_text(encoding="utf-8")
+    assert "### US3 - Pay with card (P3)" in report and "`tasks.md`" in report

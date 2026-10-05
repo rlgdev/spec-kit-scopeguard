@@ -45,6 +45,9 @@ jobs:
           set +e
           bash ../../scripts/bash/scopeguard.sh plan; code=$?
           test "$code" -eq 1 || { echo "expected exit 1, got $code"; exit 1; }
+          bash ../../scripts/bash/scopeguard.sh plan --iteration 4; code=$?
+          test "$code" -eq 3 || { echo "expected escalation exit 3, got $code"; exit 1; }
+          test -f specs/001-team-board/scopeguard-escalation-plan.md
       - name: PowerShell launcher reproduces the missed user story (expects exit 1)
         shell: pwsh
         working-directory: examples/missing-story
@@ -53,6 +56,8 @@ jobs:
           if ($LASTEXITCODE -ne 1) { throw "expected exit 1, got $LASTEXITCODE" }
           & ../../scripts/powershell/scopeguard.ps1 inventory --json | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "inventory failed with $LASTEXITCODE" }
+          & ../../scripts/powershell/scopeguard.ps1 tasks --iteration 4
+          if ($LASTEXITCODE -ne 3) { throw "expected escalation exit 3, got $LASTEXITCODE" }
           exit 0
 
   spec-kit:
@@ -83,7 +88,7 @@ jobs:
           specify preset add --from http://localhost:8765/scopeguard-preset.zip
           specify extension list | grep -i scopeguard
           grep -q "speckit.scopeguard.plan" .specify/extensions.yml
-          grep -rq "bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan" .claude
+          grep -rq "bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan --iteration N" .claude
           # the preset appends the Scope Coverage table to the composed plan template
           git init -q
           bash .specify/scripts/bash/create-new-feature.sh --json --short-name team-board "Team board"

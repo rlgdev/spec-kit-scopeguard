@@ -5,7 +5,9 @@
 
 **Deterministic scope gates for [GitHub Spec Kit](https://github.com/github/spec-kit).**
 No user story or requirement from `spec.md` can be dropped silently by `/speckit.plan`,
-`/speckit.tasks` or `/speckit.implement`.
+`/speckit.tasks` or `/speckit.implement`. When one is missing, scopeGuard has the agent put it back
+into the plan or task list. If that still fails after 4 iterations, it stops and hands you a
+problem report.
 
 ## Why
 
@@ -27,17 +29,38 @@ left out has to be written down as a deferral with a reason.
 | Phase | Hook (automatic) | Gate | Passes when |
 |-------|------------------|------|-------------|
 | before plan | `before_plan` → `/speckit.scopeguard.inventory` | – | prints every scope ID and the scope contract for the planner |
-| after plan | `after_plan` → `/speckit.scopeguard.plan` | **plan** | every ID has a row in plan.md's `## Scope Coverage` table: `covered` (with where), or `deferred` (with a reason) |
+| after plan | `after_plan` → `/speckit.scopeguard.plan` | **plan** + resolve | every ID has a row in plan.md's `## Scope Coverage` table: `covered` (with where), or `deferred` (with a reason) |
 | before tasks | `before_tasks` → `/speckit.scopeguard.inventory` | – | prints the in-scope IDs (not deferred by the plan) |
-| after tasks | `after_tasks` → `/speckit.scopeguard.tasks` | **tasks** | every in-scope story has `[USn]` tasks and every in-scope requirement is named by a task or mapped in tasks.md's coverage table |
+| after tasks | `after_tasks` → `/speckit.scopeguard.tasks` | **tasks** + resolve | every in-scope story has `[USn]` tasks and every in-scope requirement is named by a task or mapped in tasks.md's coverage table |
 | after implement | `after_implement` (optional) → `/speckit.scopeguard.implement` | **implement** | every task that carries an in-scope item is checked off |
 
 Each item gets a verdict: **pass**, **violation** or **waived** (deferred with a reason, always shown).
-Exit codes: `0` pass, `1` violations, `2` setup error.
+Exit codes: `0` pass, `1` violations to resolve, `2` setup error, `3` escalated (still failing
+after the last allowed iteration).
 
-When a gate fails inside `/speckit.plan` or `/speckit.tasks`, the agent gets the missing IDs and the
-exact rows to add. It is told to fix the plan or task list, never `spec.md`, and to defer
-nothing without asking you. Then it re-runs the gate, at most three times.
+### Resolve, re-check, escalate
+
+The plan and tasks gates do more than report. Inside `/speckit.plan` and `/speckit.tasks` they run
+a bounded loop:
+
+1. **Check.** The script lists every missing or invalid item under `RESOLVE`, with that item's text from `spec.md`.
+2. **Resolve.** The agent adds the missing item to the artifact.
+   - **Plan gate:** it designs the item into the plan (data model, contracts, research, structure) and adds its `covered` row.
+   - **Tasks gate:** it adds a phase with `[USn]` tasks for the story, or names the requirement in a task.
+
+   It never edits `spec.md`, and it never defers an item without a reason from the spec or from you.
+3. **Re-check** with the next `--iteration`. The loop repeats until the gate passes, for at most
+   `remediation.max_iterations` (default **4**) resolve-and-recheck iterations.
+4. **Escalate.** If items are still open after the last iteration, the script exits `3` and
+   writes `scopeguard-escalation-<gate>.md` into the feature directory. The agent then completes
+   the report: for each unresolved item, what it tried, the blocker, and the decision it needs from you.
+   It reports this back to you and stops the command, instead of looping or claiming success.
+
+If an item can only be included with information or a decision that only you can give, the agent
+leaves it open, so you get a problem report instead of a guess. Iteration history is kept in
+`<feature>/.scopeguard/history-<gate>.json`.
+[`examples/escalation`](examples/escalation) shows a real case, a story that conflicts with the
+constitution, along with the problem report an agent produced for it.
 
 ## Install
 
@@ -49,14 +72,14 @@ From your Spec Kit project root:
 
 ```bash
 # 1. the extension: commands, hooks and the checker
-specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.1.0/scopeguard.zip
+specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.2.0/scopeguard.zip
 
 # 2. the preset (recommended): adds the "Scope Coverage" tables to the plan and tasks templates
-specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.1.0/scopeguard-preset.zip
+specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.2.0/scopeguard-preset.zip
 ```
 
 Spec Kit asks you to confirm installs from a URL; answer `y`. Use `releases/latest/download/...`
-instead of `releases/download/v0.1.0/...` to always get the newest release.
+instead of `releases/download/v0.2.0/...` to always get the newest release.
 
 <details>
 <summary>Install through a catalog (for teams)</summary>
@@ -80,7 +103,7 @@ From [`examples/missing-story`](examples/missing-story). The plan in this exampl
 
 ```text
 $ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan
-scopeGuard 0.1.0 | gate: plan | feature: specs/001-team-board
+scopeGuard 0.2.0 | gate: plan | feature: specs/001-team-board
 spec scope: 4 user stories, 7 requirements
 
   [FAIL]   US3      Share a board with teammates (P2)
@@ -98,13 +121,17 @@ To fix, account for each missing item in plan.md "## Scope Coverage":
   | FR-004 | System MUST let the board owner invite teammates by e-mail and revo... | covered | <where the plan handles it> | |
 ```
 
+Inside the hook the gate runs with `--iteration N`. It then also prints each open item's spec text
+under `RESOLVE`, plus the next step (`re-run this gate with --iteration N+1`, or `ESCALATE` with
+the path of the problem report).
+
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
 | `/speckit.scopeguard.inventory` | Lists every user story and requirement ID in `spec.md` and the scope contract. Prints a ready-made coverage table if the plan has none yet. |
-| `/speckit.scopeguard.plan` | Plan gate. |
-| `/speckit.scopeguard.tasks` | Tasks gate. |
+| `/speckit.scopeguard.plan` | Plan gate: resolves missing items in the plan, escalates after 4 iterations. |
+| `/speckit.scopeguard.tasks` | Tasks gate: adds tasks for missing items, escalates after 4 iterations. |
 | `/speckit.scopeguard.implement` | Implement gate. |
 | `/speckit.scopeguard.report` | Coverage matrix for every item across plan / tasks / implement. Also saved as `scopeguard-report.md` in the feature directory. |
 | `/speckit.scopeguard.compare` | Compares two feature directories, for example two runs of the same spec, item by item. |
@@ -123,7 +150,8 @@ python .specify/extensions/scopeguard/scripts/python/scopeguard.py <command> [op
 Commands: `inventory`, `plan`, `tasks`, `implement`, `check` (every gate whose artifact exists; add
 `--implement` to include that gate), `report`, `compare DIR_A DIR_B`.
 Options: `--feature-dir specs/<feature>`, `--all`, `--json`, `--format md`, `--out FILE [--append]`,
-`--save`, `--verbose`, `--report-only`, `--config FILE`.
+`--save`, `--verbose`, `--report-only`, `--config FILE`, `--iteration N` (resolution loop; exit `3` and
+a problem report once `N` reaches `remediation.max_iterations`).
 
 The active feature is found the same way Spec Kit finds it: `SPECIFY_FEATURE_DIRECTORY`, then
 `.specify/feature.json`, then the git branch name, then the only directory under `specs/`.
@@ -169,6 +197,8 @@ ids:
 plan:
   check_requirements: true         # false = only user stories must be in the plan table
   require_section: true            # false = fall back to "ID mentioned anywhere in plan.md"
+remediation:
+  max_iterations: 4                # resolve-and-recheck iterations before escalating
 unknown_ids: violation             # IDs in plan/tasks that spec.md does not define
 features:
   exclude: ["001-*"]               # skip features planned before scopeGuard (for --all)
@@ -184,7 +214,7 @@ writes the report to the job summary:
 
 ```yaml
 - uses: actions/checkout@v5
-- uses: rlgdev/spec-kit-scopeguard@v0.1.0
+- uses: rlgdev/spec-kit-scopeguard@v0.2.0
   with:
     command: check        # check | plan | tasks | implement | report
     features: all         # or specs/001-my-feature
@@ -226,6 +256,9 @@ per-run record. To measure without blocking anyone, set `mode: report`.
 - It does **not** judge whether the plan handles an item *well*, or whether a ticked task is really
   done. A `covered` row whose reference points nowhere still needs a human reviewer. The
   *Plan reference* column makes that review quick.
+- The resolving is done by the agent, following the gate command. The checker verifies the
+  result after every iteration and enforces the iteration limit, so the loop cannot run forever
+  or end in a claimed success while items are still missing.
 - IDs come from the standard Spec Kit spec format (`### User Story N - Title (Priority: Pn)`,
   `- **FR-001**: ...`). Other heading styles can be matched with `ids.story_pattern`.
 

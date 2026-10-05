@@ -18,7 +18,8 @@ waived.
 Standard library only; Python 3.8+. PyYAML is used for the config file when
 available, otherwise a small built-in YAML-subset reader is used.
 
-Exit codes: 0 = pass, 1 = violations found, 2 = usage or setup error.
+Exit codes: 0 = pass, 1 = violations found (resolve them), 2 = usage or setup error,
+3 = still failing after the last allowed resolution iteration (escalate to the user).
 """
 
 from __future__ import annotations
@@ -35,11 +36,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_ERROR = 2
+EXIT_ESCALATE = 3  # still failing after the last allowed resolution iteration
 
 TOOL = "scopeguard"
 CONFIG_RELATIVE = Path(".specify") / "extensions" / "scopeguard" / "scopeguard-config.yml"
@@ -80,6 +82,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     # How to treat IDs referenced in plan/tasks that spec.md does not define.
     "unknown_ids": "violation",  # violation | warning | ignore
+    "remediation": {
+        # How many resolve-and-recheck iterations the agent gets before the gate escalates
+        # (exit code 3 + a problem report) instead of asking for another iteration.
+        "max_iterations": 4,
+    },
     "features": {
         "exclude": [],  # glob patterns of feature directory names skipped by --all
     },
@@ -420,6 +427,7 @@ class ScopeItem:
     title: str
     priority: Optional[str]
     line: int
+    excerpt: str = ""  # the item's text in spec.md, for resolving it
 
 
 @dataclass
@@ -514,6 +522,7 @@ class ItemResult:
             "detail": self.detail,
             "evidence": self.evidence,
             "location": self.location,
+            "spec_excerpt": self.item.excerpt if self.verdict == VIOLATION else None,
         }
 
 
@@ -526,6 +535,11 @@ class GateResult:
     findings: List[Finding]
     skeleton: List[str] = field(default_factory=list)
     skeleton_target: Optional[str] = None
+    iteration: Optional[int] = None
+    max_iterations: Optional[int] = None
+    escalated: bool = False
+    escalation_report: Optional[Path] = None
+    history: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def violations(self) -> List[Any]:
@@ -648,6 +662,7 @@ def parse_spec(path: Path, scheme: IdScheme, config: Dict[str, Any]) -> SpecMode
             f"spec.md still contains {clarifications} [NEEDS CLARIFICATION] marker(s); scope may change",
             rel,
         ))
+    _attach_excerpts(items, lines)
     # Requirement mentions in spec that are never defined (e.g. 'see FR-099').
     defined = set(items)
     for number, line in enumerate(lines, start=1):
@@ -656,6 +671,35 @@ def parse_spec(path: Path, scheme: IdScheme, config: Dict[str, Any]) -> SpecMode
                 findings.append(Finding(WARNING, f"spec.md mentions {display}, which it never defines", f"{rel}:{number}", display))
                 defined.add(key)
     return SpecModel(path, items, findings)
+
+
+def _attach_excerpts(items: Dict[str, ScopeItem], lines: List[str], max_lines: int = 18) -> None:
+    """Attach the spec text of each item: a story's section, a requirement's line."""
+    for item in items.values():
+        if item.kind == "requirement":
+            item.excerpt = lines[item.line - 1].strip()
+            continue
+        start = item.line - 1
+        h = heading(lines[start])
+        level = h[0] if h else 3
+        body: List[str] = [lines[start].strip()]
+        for line in lines[start + 1:]:
+            nh = heading(line)
+            if nh and nh[0] <= level:
+                break
+            if line.strip() in ("---", "***", "___"):
+                continue
+            body.append(line.rstrip())
+        while body and not body[-1].strip():
+            body.pop()
+        compact: List[str] = []
+        for line in body:
+            if not line.strip() and compact and not compact[-1].strip():
+                continue
+            compact.append(line)
+        if len(compact) > max_lines:
+            compact = compact[:max_lines] + ["[... see spec.md line %d]" % item.line]
+        item.excerpt = "\n".join(compact)
 
 
 def normalize_status(raw: str) -> str:
@@ -1265,7 +1309,36 @@ def render_gate_text(result: GateResult, root: Path, verbose: bool) -> str:
         out.append("")
         out.append(f"To fix, account for each missing item in {result.skeleton_target}:")
         out.extend("  " + line for line in result.skeleton)
+    if result.verdict == "fail" and (result.iteration is not None or verbose):
+        to_resolve = [r for r in result.items if r.verdict == VIOLATION]
+        if to_resolve:
+            out.append("")
+            out.append("RESOLVE - each item below with its text from spec.md:")
+            for r in to_resolve:
+                out.append(f"  {r.item.display} [{r.code or 'violation'}] {r.detail}")
+                for line in (r.item.excerpt or "").split("\n"):
+                    out.append(f"      > {line}" if line.strip() else "      >")
+    if result.iteration is not None:
+        out.append("")
+        out.append(_iteration_line(result, root))
     return "\n".join(out)
+
+
+def _iteration_line(result: GateResult, root: Path) -> str:
+    it, mx = result.iteration, result.max_iterations
+    if result.verdict == "pass":
+        return f"ITERATION {it} of {mx}: PASS - nothing left to resolve."
+    if result.escalated:
+        report = rel_path(result.escalation_report, root) if result.escalation_report else "(not written)"
+        return (
+            f"ESCALATE: still failing after {it} of {mx} resolution iterations. STOP resolving. "
+            f"Complete the TODO(agent) fields in {report} and report the problem to the user; "
+            f"do not continue the calling command as if it succeeded."
+        )
+    return (
+        f"ITERATION {it} of {mx} used: resolve every item above in the artifact, then re-run this gate "
+        f"with --iteration {it + 1}."
+    )
 
 
 def gate_to_dict(result: GateResult, root: Path) -> Dict[str, Any]:
@@ -1278,6 +1351,11 @@ def gate_to_dict(result: GateResult, root: Path) -> Dict[str, Any]:
         "findings": [f.to_dict() for f in result.findings],
         "fix_target": result.skeleton_target,
         "fix_skeleton": result.skeleton,
+        "iteration": result.iteration,
+        "max_iterations": result.max_iterations,
+        "next_iteration": (result.iteration + 1) if (result.iteration is not None and result.verdict == "fail" and not result.escalated) else None,
+        "escalated": result.escalated,
+        "escalation_report": rel_path(result.escalation_report, root) if result.escalation_report else None,
     }
 
 
@@ -1302,6 +1380,114 @@ def render_gate_markdown(result: GateResult, root: Path) -> str:
         for f in extra:
             out.append(f"- **{f.level}**: {f.message}" + (f" (`{f.location}`)" if f.location else ""))
     return "\n".join(out) + "\n"
+
+
+# --------------------------------------------------------------------------- #
+# Resolution loop: history and escalation                                       #
+# --------------------------------------------------------------------------- #
+
+
+def _open_ids(result: GateResult) -> List[str]:
+    ids = [r.item.display for r in result.items if r.verdict == VIOLATION]
+    ids += [f.item or (f.location or "general") for f in result.findings if f.level == VIOLATION]
+    return ids
+
+
+def update_history(result: GateResult) -> List[Dict[str, Any]]:
+    """Record this iteration in <feature>/.scopeguard/history-<gate>.json (reset at iteration 0)."""
+    from datetime import datetime
+
+    path = result.feature_dir / ".scopeguard" / f"history-{result.gate}.json"
+    entries: List[Dict[str, Any]] = []
+    if result.iteration and path.is_file():
+        try:
+            data = json.loads(read_text(path))
+            entries = [e for e in data.get("iterations", []) if isinstance(e, dict) and e.get("iteration", -1) < result.iteration]
+        except (ValueError, AttributeError):
+            entries = []
+    entries.append({
+        "iteration": result.iteration,
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "verdict": result.verdict,
+        "violations": len(result.violations),
+        "open": _open_ids(result),
+    })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"gate": result.gate, "iterations": entries}, indent=2) + "\n", encoding="utf-8")
+    return entries
+
+
+def escalation_path(result: GateResult) -> Path:
+    return result.feature_dir / f"scopeguard-escalation-{result.gate}.md"
+
+
+def render_escalation(result: GateResult, root: Path) -> str:
+    from datetime import datetime
+
+    unresolved = [r for r in result.items if r.verdict == VIOLATION]
+    other = [f for f in result.findings if f.level == VIOLATION]
+    artifact = {"plan": "plan.md", "tasks": "tasks.md", "implement": "tasks.md"}.get(result.gate, "the artifact")
+    out = [
+        f"# scopeGuard escalation: {result.gate} gate",
+        "",
+        f"- **Feature**: `{rel_path(result.feature_dir, root)}`",
+        f"- **Result**: unresolved after {result.iteration} of {result.max_iterations} resolution iterations "
+        f"({datetime.now().strftime('%Y-%m-%d %H:%M')})",
+        f"- **Still open**: {len(unresolved)} scope item(s), {len(other)} other violation(s)",
+        f"- **Artifact being resolved**: `{artifact}`",
+        "",
+        "The agent could not bring every scope item into the "
+        f"{result.gate} artifact. Each item below says what was tried, what blocks it and which decision is "
+        "needed. Fix the blocker (or take the decision), then run the gate again.",
+        "",
+    ]
+    if result.history:
+        out += ["## Iteration history", "", "| Iteration | Violations | Open items |", "|---|---|---|"]
+        for entry in result.history:
+            out.append(f"| {entry.get('iteration')} | {entry.get('violations')} | {', '.join(entry.get('open') or []) or '-'} |")
+        out.append("")
+    if unresolved:
+        out += ["## Unresolved items", ""]
+        for r in unresolved:
+            first_open = next((e.get("iteration") for e in result.history if r.item.display in (e.get("open") or [])), result.iteration)
+            title = r.item.title + (f" ({r.item.priority})" if r.item.priority else "")
+            out += [
+                f"### {r.item.display} - {title}",
+                "",
+                f"- **Problem**: {r.detail}" + (f" (`{r.location}`)" if r.location else ""),
+                f"- **Open since**: iteration {first_open}",
+                f"- **Spec text** (spec.md:{r.item.line}):",
+                "",
+            ]
+            out += [f"  > {line}" if line.strip() else "  >" for line in (r.item.excerpt or "").split("\n")]
+            out += [
+                "",
+                "- **Attempted**: TODO(agent): what was changed in each iteration to include this item",
+                "- **Blocker**: TODO(agent): why it could not be included (missing information, conflict with the "
+                "constitution or another requirement, technical constraint, unclear acceptance criteria, ...)",
+                "- **Decision needed**: TODO(agent): the concrete choice for the user (provide X, approve deferring "
+                "with reason Y, change the spec, accept a partial design, ...)",
+                "",
+            ]
+    if other:
+        out += ["## Other violations", ""]
+        for f in other:
+            out.append(f"- {f.message}" + (f" (`{f.location}`)" if f.location else ""))
+        out += ["", "- **Blocker / decision needed**: TODO(agent)", ""]
+    return "\n".join(out).rstrip() + "\n"
+
+
+def apply_iteration(result: GateResult, iteration: int, max_iterations: int, root: Path) -> None:
+    result.iteration = iteration
+    result.max_iterations = max_iterations
+    result.history = update_history(result)
+    report = escalation_path(result)
+    if result.verdict == "fail" and iteration >= max_iterations:
+        result.escalated = True
+        report.write_text(render_escalation(result, root), encoding="utf-8", newline="\n")
+        result.escalation_report = report
+    elif result.verdict == "pass" and report.is_file():
+        report.unlink()  # a stale problem report from an earlier escalation
 
 
 # --------------------------------------------------------------------------- #
@@ -1539,6 +1725,11 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--save", action="store_true", help="report: also write scopeguard-report.md into each feature directory")
     common.add_argument("--verbose", "-v", action="store_true", help="list passing items too")
     common.add_argument("--report-only", action="store_true", help="never fail (exit 0); same as mode: report")
+    common.add_argument(
+        "--iteration", type=int, metavar="N",
+        help="resolution loop: N resolve-and-recheck iterations done so far (0 = first check). "
+        "Records history; at N >= remediation.max_iterations a failing gate escalates (exit 3, problem report)",
+    )
 
     parser = argparse.ArgumentParser(
         prog="scopeguard",
@@ -1663,7 +1854,16 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                 fn = {"plan": gate_plan, "tasks": gate_tasks, "implement": gate_implement}[gate]
                 results.append(fn(fd, spec, scheme, config))
 
+        max_iterations = int(config.get("remediation", {}).get("max_iterations", 4))
+        if max_iterations < 1:
+            raise ScopeGuardError("config: remediation.max_iterations must be at least 1")
+        if args.iteration is not None:
+            if args.iteration < 0:
+                raise ScopeGuardError("--iteration must be 0 or greater")
+            for r in results:
+                apply_iteration(r, args.iteration, max_iterations, root)
         failed = any(r.verdict == "fail" for r in results)
+        escalated = any(r.escalated for r in results)
         if fmt == "json":
             print(json.dumps({
                 "tool": TOOL,
@@ -1671,7 +1871,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                 "command": args.command,
                 "mode": config["mode"],
                 "config_sources": sources,
-                "verdict": "fail" if failed else "pass",
+                "verdict": ("escalate" if escalated else "fail") if failed else "pass",
                 "gates": [gate_to_dict(r, root) for r in results],
             }, indent=2))
         elif fmt == "md":
@@ -1683,7 +1883,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         if args.out:
             _write_out(args.out, "\n".join(render_gate_markdown(r, root) for r in results), args.append)
         if failed and config["mode"] == "enforce":
-            return EXIT_FAIL
+            return EXIT_ESCALATE if escalated else EXIT_FAIL
         return EXIT_PASS
     except ScopeGuardError as exc:
         if fmt == "json":

@@ -1,5 +1,5 @@
 ---
-description: "scopeGuard tasks gate: verify every in-scope user story and requirement from spec.md is carried by at least one task in tasks.md"
+description: "scopeGuard tasks gate: find every in-scope user story and requirement from spec.md that tasks.md does not carry, add the missing tasks (up to 4 iterations), and escalate with a problem report if it cannot be resolved"
 scripts:
   sh: bash scripts/bash/scopeguard.sh tasks
   ps: scripts/powershell/scopeguard.ps1 tasks
@@ -16,24 +16,33 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Goal
 
-Deterministically verify that task generation did not silently drop scope. Every user story and traced requirement ID in `spec.md` that `plan.md` does not mark `deferred` must be carried by at least one task in `tasks.md`:
+Make sure the task list carries the whole in-scope part of `spec.md`, and **fix the task list when it does not**. Every user story and traced requirement that `plan.md` does not mark `deferred` must be carried by at least one task in `tasks.md`:
 
 - a user story by tasks labelled `[USn]` (or listed under a `User Story n` phase heading);
-- a requirement by naming its ID in a task description (for example `(FR-003)`) or by a row in the `## Scope Coverage` table of `tasks.md` that maps it to existing task IDs.
+- a requirement by naming its ID in a task description (for example `(FR-003)`), or by a row in the `## Scope Coverage` table of `tasks.md` that maps it to existing task IDs.
 
-This command runs automatically as the mandatory `after_tasks` hook. The verdict comes from the script; never report the task list as complete while it exits non-zero.
+This command runs automatically as the mandatory `after_tasks` hook and can also be run by hand. The script decides, you resolve. Exit codes: **0** pass, **1** resolve, **3** escalate, **2** setup error.
 
-## Steps
+## Procedure
 
-1. Run `{SCRIPT}` from the repository root. If the user input above names a feature directory, append `--feature-dir <that directory>`. Keep the exit code and the full output.
+Start with `N = 0`.
 
-2. **Exit code 0 — PASS.** Report one line, for example `scopeGuard tasks gate: PASS (10 carried, 1 waived)`, then list waived items and warnings exactly as printed. Done.
+1. **Check.** From the repository root run `{SCRIPT} --iteration N` (append `--feature-dir <dir>` if the user input names a feature directory). Keep the exit code and the full output.
 
-3. **Exit code 1 — FAIL.** Show the user the `[FAIL]` lines exactly as printed. Then fix `tasks.md` (never `spec.md`):
-   - **Story without tasks**: add a phase for that story in priority order, with concrete tasks labelled `[USn]`, following the existing format (`- [ ] T### [P?] [USn] Description with file path`). Continue the task numbering; do not renumber existing tasks.
-   - **Requirement without tasks**: name the requirement ID in the description of the task(s) that implement it, or add a task for it, or map it in the `## Scope Coverage` table to the existing task IDs that deliver it.
-   - **Do not defer to pass the gate.** Only the user (or `spec.md` / `plan.md`) can put an item out of scope. If you think an item should be deferred, ask the user; a deferred row needs a reason.
-   - **Unknown IDs or task IDs**: correct the label, mention or table row.
-   - Re-run `{SCRIPT}`. Repeat at most 3 times. If it still fails, stop and tell the user exactly which items remain open.
+2. **Exit 0 — pass.** Report one line, for example `scopeGuard tasks gate: PASS after N resolution iteration(s) (10 carried, 1 waived)`, then list waived items and warnings exactly as printed. Done — the calling command continues.
 
-4. **Exit code 2 — ERROR.** A setup problem (no `tasks.md`, feature not found, bad config). Show the message and the fix.
+3. **Exit 1 — resolve.** The output lists every open item under `RESOLVE`, each with its text from `spec.md`. Resolve **all** of them in this iteration, then set `N = N + 1` and go back to step 1.
+   - **User story without tasks** — add a phase for it in priority order, in the existing format: `## Phase X: User Story n - Title (Priority: Pn)` with **Goal** and **Independent Test**, then concrete tasks `- [ ] T### [P?] [USn] Description with exact file path` that deliver its acceptance scenarios, using the structure, data model and contracts from `plan.md`. Add test tasks if the spec or plan asks for tests. Continue the task numbering from the highest existing ID; never renumber existing tasks. Update the dependency notes if the new phase depends on others.
+   - **Requirement without tasks** — name its ID in the description of the task(s) that implement it, or add a task for it, or add a row to the `## Scope Coverage` table of `tasks.md` mapping it to the existing task IDs that deliver it.
+   - **Unknown story label, requirement ID or task ID** — correct the label, mention or table row.
+   - If `plan.md` does not give enough design to write the tasks for an item, extend the plan for that item first (and its Scope Coverage row), then add the tasks.
+   - Never edit, renumber, merge or delete IDs in `spec.md`.
+   - **Never defer an item just to make the gate pass.** Only `spec.md`, `plan.md` or the user can put an item out of scope. If an item cannot be broken into tasks without a decision only the user can make, leave it open — the gate will escalate with a problem report instead of you guessing.
+   - Keep a short note of what you changed for each item in each iteration; you need it if the gate escalates.
+
+4. **Exit 3 — escalate.** The gate is still failing after the last allowed iteration (4 by default). Stop resolving.
+   - Open the problem report named in the output (`scopeguard-escalation-tasks.md` in the feature directory) and replace every `TODO(agent)` with: what you attempted for that item in each iteration, the blocker, and the concrete decision needed from the user.
+   - Report to the user: `scopeGuard tasks gate: ESCALATED — <n> item(s) could not be included in the task list`, then per item its ID, title, blocker and decision needed, and the path of the report.
+   - **End the calling command here.** Do not report the task list as complete and do not start implementation.
+
+5. **Exit 2 — error.** A setup problem (no `tasks.md`, feature not found, bad config). Show the message and the fix.

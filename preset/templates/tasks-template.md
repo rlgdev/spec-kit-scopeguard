@@ -8,8 +8,8 @@
 
   Use this table for requirements delivered across several tasks or not named on a task line.
   Status: covered (Tasks lists existing task IDs) or deferred (Reason mandatory, only with
-  the user's approval). The after_tasks gate (/speckit.scopeguard.tasks) fails when an
-  in-scope ID has no task.
+  the user's approval). The after_tasks gate (/speckit.scopeguard.tasks) adds tasks for any
+  in-scope ID without one (up to 4 iterations) and escalates with a problem report if it cannot.
 -->
 
 | ID | Title | Status | Tasks | Reason (required if deferred) |

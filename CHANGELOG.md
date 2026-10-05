@@ -4,6 +4,33 @@ All notable changes to scopeGuard are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-10-05
+
+### Added
+
+- Resolution loop for the plan and tasks gates. The gate commands now resolve what is missing
+  instead of only reporting it:
+  - **Plan gate:** the agent designs each missing story or requirement into the plan and adds its coverage row.
+  - **Tasks gate:** the agent adds `[USn]` phases and tasks, or names the requirement in a task.
+
+  After each resolution the gate re-checks.
+- `--iteration N` and `remediation.max_iterations` (default 4). When a gate still fails after
+  the last allowed iteration it exits `3` (escalate) and writes `scopeguard-escalation-<gate>.md`
+  into the feature directory. For each unresolved item the report holds:
+  - its spec text;
+  - its iteration history;
+  - fields the agent completes: what was attempted, the blocker, and the decision needed from the user.
+
+  The agent then reports back to the user and stops the calling command.
+- `RESOLVE` block in the gate output with each open item's text from `spec.md`, and
+  `spec_excerpt` in the JSON output.
+- Per-gate iteration history in `<feature>/.scopeguard/history-<gate>.json`. A stale
+  escalation report is removed once the gate passes.
+
+### Changed
+
+- Extension effect is now `read-write`: the plan and tasks gates edit `plan.md`, `tasks.md` and the plan's design artifacts.
+
 ## [0.1.0] - 2026-10-05
 
 ### Added

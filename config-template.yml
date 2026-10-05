@@ -50,6 +50,13 @@ implement:
   enabled: true
   check_requirements: true
 
+remediation:
+  # The plan and tasks gates resolve what is missing and re-check. After this many
+  # resolve-and-recheck iterations a still-failing gate stops, writes
+  # scopeguard-escalation-<gate>.md into the feature directory and exits 3
+  # so the agent reports the problem to you instead of looping or guessing.
+  max_iterations: 4
+
 # IDs referenced in plan.md / tasks.md that spec.md does not define
 # (renumbered, invented or stale scope): violation | warning | ignore
 unknown_ids: violation

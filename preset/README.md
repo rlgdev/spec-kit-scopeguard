@@ -11,6 +11,6 @@ The tables are checked by the [scopeGuard extension](https://github.com/rlgdev/s
 (`after_plan` / `after_tasks` hooks). Install both:
 
 ```bash
-specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.1.0/scopeguard.zip
-specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.1.0/scopeguard-preset.zip
+specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.2.0/scopeguard.zip
+specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.2.0/scopeguard-preset.zip
 ```

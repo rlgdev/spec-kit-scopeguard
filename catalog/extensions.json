@@ -1,22 +1,22 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-10-05T00:00:00Z",
+  "updated_at": "2026-10-05T12:00:00Z",
   "catalog_url": "https://raw.githubusercontent.com/rlgdev/spec-kit-scopeguard/main/catalog/extensions.json",
   "extensions": {
     "scopeguard": {
       "name": "scopeGuard",
       "id": "scopeguard",
-      "description": "Deterministic scope gates: no user story or requirement from spec.md is silently dropped by plan, tasks or implement.",
+      "description": "Deterministic scope gates that find and resolve user stories or requirements from spec.md dropped by plan or tasks, and escalate with a problem report when they cannot.",
       "author": "rlgdev",
-      "version": "0.1.0",
-      "download_url": "https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.1.0/scopeguard.zip",
+      "version": "0.2.0",
+      "download_url": "https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.2.0/scopeguard.zip",
       "repository": "https://github.com/rlgdev/spec-kit-scopeguard",
       "homepage": "https://github.com/rlgdev/spec-kit-scopeguard",
       "documentation": "https://github.com/rlgdev/spec-kit-scopeguard/blob/main/README.md",
       "changelog": "https://github.com/rlgdev/spec-kit-scopeguard/blob/main/CHANGELOG.md",
       "license": "MIT",
       "category": "process",
-      "effect": "read-only",
+      "effect": "read-write",
       "requires": {
         "speckit_version": ">=0.12.17"
       },
@@ -35,7 +35,7 @@
       "downloads": 0,
       "stars": 0,
       "created_at": "2026-10-05T00:00:00Z",
-      "updated_at": "2026-10-05T00:00:00Z"
+      "updated_at": "2026-10-05T12:00:00Z"
     }
   }
 }

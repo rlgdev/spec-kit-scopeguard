@@ -3,7 +3,7 @@ schema_version: "1.0"
 preset:
   id: "scopeguard-templates"
   name: "scopeGuard Templates"
-  version: "0.1.0"
+  version: "0.2.0"
   description: "Appends a Scope Coverage table to the plan and tasks templates so every user story and requirement from spec.md is accounted for (pairs with the scopeguard extension)"
   author: "rlgdev"
   repository: "https://github.com/rlgdev/spec-kit-scopeguard"

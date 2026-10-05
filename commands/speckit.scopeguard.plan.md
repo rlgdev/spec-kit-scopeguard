@@ -1,5 +1,5 @@
 ---
-description: "scopeGuard plan gate: verify every user story and requirement in spec.md is accounted for in plan.md (covered, or deferred with a reason)"
+description: "scopeGuard plan gate: find every user story and requirement from spec.md that plan.md left out, resolve it in the plan (up to 4 iterations), and escalate with a problem report if it cannot be resolved"
 scripts:
   sh: bash scripts/bash/scopeguard.sh plan
   ps: scripts/powershell/scopeguard.ps1 plan
@@ -16,22 +16,33 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Goal
 
-Deterministically verify that the implementation plan did not silently drop scope. Every user story (`US1`, `US2`, ...) and every traced requirement ID (`FR-###`, `NFR-###`) defined in `spec.md` must have a row in the `## Scope Coverage` table of `plan.md`, with status `covered` (and where the plan handles it) or `deferred` (with a reason). This command runs automatically as the mandatory `after_plan` hook.
+Make sure the implementation plan covers the whole scope of `spec.md`, and **fix the plan when it does not**. Every user story (`US1`, `US2`, ...) and every traced requirement (`FR-###`, `NFR-###`) must be planned and listed in the `## Scope Coverage` table of `plan.md`: `covered` (with where the plan handles it) or `deferred` (with a reason that comes from `spec.md` or the user). This command runs automatically as the mandatory `after_plan` hook and can also be run by hand.
 
-The verdict comes from the script, not from your judgement. Do not re-interpret it and never report the plan as complete while the script exits non-zero.
+The script decides, you resolve. Never re-interpret its verdict. Exit codes: **0** pass, **1** resolve, **3** escalate, **2** setup error.
 
-## Steps
+## Procedure
 
-1. Run `{SCRIPT}` from the repository root. If the user input above names a feature directory, append `--feature-dir <that directory>`. Keep the exit code and the full output.
+Start with `N = 0`.
 
-2. **Exit code 0 — PASS.** Report one line, for example `scopeGuard plan gate: PASS (10 covered, 1 waived)`, then list waived items and warnings exactly as printed. Done.
+1. **Check.** From the repository root run `{SCRIPT} --iteration N` (append `--feature-dir <dir>` if the user input names a feature directory). Keep the exit code and the full output.
 
-3. **Exit code 1 — FAIL.** Show the user the `[FAIL]` lines exactly as printed. Then fix `plan.md` (never `spec.md`):
-   - **Missing item**: read it in `spec.md`, make the plan genuinely handle it (research, data model, contracts, project structure — whatever it needs) and add a `covered` row to the Scope Coverage table that says where. The fix block printed at the end of the output shows the rows to add.
-   - **Do not defer to pass the gate.** Mark an item `deferred` only when `spec.md` or the user explicitly puts it out of scope; otherwise ask the user and wait for the answer. A deferred row needs the reason in the Reason column.
-   - **Deferred without a reason / unrecognized status / conflicting rows**: correct that row.
-   - **Unknown ID** (referenced in the plan but not defined in `spec.md`): remove or correct the row; do not add the ID to `spec.md`.
-   - Never renumber, merge, rename or delete IDs in `spec.md`, and do not touch rows of items that already pass.
-   - Re-run `{SCRIPT}`. Repeat at most 3 times. If it still fails, stop and tell the user exactly which items remain open and why. Do not continue as if the plan were complete.
+2. **Exit 0 — pass.** Report one line, for example `scopeGuard plan gate: PASS after N resolution iteration(s) (10 covered, 1 waived)`, then list waived items and warnings exactly as printed. Done — the calling command continues.
 
-4. **Exit code 2 — ERROR.** A setup problem (no `plan.md`, feature not found, bad config). Show the message and the fix, for example re-running with `--feature-dir specs/<feature>`.
+3. **Exit 1 — resolve.** The output lists every open item under `RESOLVE`, each with its text from `spec.md`. Resolve **all** of them in this iteration, then set `N = N + 1` and go back to step 1.
+   - **Missing user story or requirement** — plan it for real, from its spec text:
+     1. Work out what the plan needs for it: entities and fields (`data-model.md`), interfaces, endpoints or events (`contracts/`), technology or approach decisions (`research.md`), a validation scenario (`quickstart.md`), project structure, and its effect on the Constitution Check.
+     2. Update those artifacts and `plan.md`, consistent with the design that already exists.
+     3. Add its row to `## Scope Coverage`: `| ID | Title | covered | <the sections or files you added or changed> | |`.
+   - **Placeholder or empty plan reference** — replace it with the concrete place in the plan.
+   - **Deferred without a reason, unrecognized status, conflicting rows** — fix the row. A deferral reason may only come from `spec.md` or the user.
+   - **Unknown ID** (in the plan but not defined in `spec.md`) — remove or correct the row.
+   - Never edit, renumber, merge or delete IDs in `spec.md`, and do not touch rows of items that already pass.
+   - **Never defer an item just to make the gate pass.** If an item cannot be planned without information or a decision only the user can give, leave it open — the gate will escalate with a problem report instead of you guessing.
+   - Keep a short note of what you changed for each item in each iteration; you need it if the gate escalates.
+
+4. **Exit 3 — escalate.** The gate is still failing after the last allowed iteration (4 by default). Stop resolving.
+   - Open the problem report named in the output (`scopeguard-escalation-plan.md` in the feature directory) and replace every `TODO(agent)` with: what you attempted for that item in each iteration, the blocker (missing information, conflict with the constitution or another requirement, technical constraint, ...), and the concrete decision needed from the user.
+   - Report to the user: `scopeGuard plan gate: ESCALATED — <n> item(s) could not be included in the plan`, then per item its ID, title, blocker and decision needed, and the path of the report.
+   - **End the calling command here.** Do not report the plan as complete and do not continue to task generation.
+
+5. **Exit 2 — error.** A setup problem (no `plan.md`, feature not found, bad config). Show the message and the fix, for example re-running with `--feature-dir specs/<feature>`.
