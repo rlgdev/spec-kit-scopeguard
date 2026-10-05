@@ -1484,7 +1484,8 @@ def apply_iteration(result: GateResult, iteration: int, max_iterations: int, roo
     report = escalation_path(result)
     if result.verdict == "fail" and iteration >= max_iterations:
         result.escalated = True
-        report.write_text(render_escalation(result, root), encoding="utf-8", newline="\n")
+        with open(report, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(render_escalation(result, root))
         result.escalation_report = report
     elif result.verdict == "pass" and report.is_file():
         report.unlink()  # a stale problem report from an earlier escalation
