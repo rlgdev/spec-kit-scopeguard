@@ -94,6 +94,10 @@ specify preset add scopeguard-templates
 
 </details>
 
+To upgrade an existing install, add `--force` to the extension command, and run
+`specify preset remove scopeguard-templates` before adding the new preset. Your
+`scopeguard-config.yml` is kept.
+
 Check it worked: `specify extension list` shows **scopeGuard**, and `.specify/extensions.yml`
 lists the five hooks. Then use Spec Kit as usual. The gates run by themselves.
 
