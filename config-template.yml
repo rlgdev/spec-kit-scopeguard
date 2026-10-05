@@ -1,0 +1,60 @@
+# scopeGuard configuration
+# Location: .specify/extensions/scopeguard/scopeguard-config.yml
+# Personal overrides (not committed): .specify/extensions/scopeguard/scopeguard-config.local.yml
+# Every key is optional; the values below are the defaults.
+
+# enforce: violations make a gate exit 1 (hooks and CI fail).
+# report:  gates always exit 0 and only report - useful to measure coverage
+#          in a lab or while introducing scopeGuard to an existing project.
+#          Can also be set per run with SCOPEGUARD_MODE=report or --report-only.
+mode: enforce
+
+ids:
+  # Regex matched at the start of spec.md heading text (case-insensitive).
+  # Group 1 captures the story number; the scope ID becomes US<n>.
+  story_pattern: '(?:User\s+Story|US)\s*[-#:]?\s*(\d+)\b'
+  # Requirement ID prefixes that are part of the traced scope.
+  # Add SC to also trace Success Criteria (SC-001, ...).
+  requirement_prefixes: [FR, NFR]
+
+spec:
+  # A spec without any user story cannot be traced; treat it as a violation.
+  require_stories: true
+
+plan:
+  enabled: true
+  # Heading (substring match) of the coverage table in plan.md.
+  section: Scope Coverage
+  # false: when plan.md has no coverage table, fall back to "the ID is mentioned
+  # somewhere in plan.md" (weaker, but works without the preset).
+  require_section: true
+  # false: only user stories must appear in the plan table.
+  check_requirements: true
+  require_reason_for_waiver: true
+  # true: a "covered" row with an empty "Plan reference" cell is a violation
+  # (default: a warning).
+  require_reference_for_covered: false
+
+tasks:
+  enabled: true
+  # Optional table in tasks.md that maps IDs to task IDs (added by the preset).
+  section: Scope Coverage
+  # false: only user stories must be carried by tasks.
+  check_requirements: true
+  # Tasks without a [USn] label inherit the story of the phase heading they sit
+  # under ("## Phase 3: User Story 1 - ...").
+  inherit_story_from_phase: true
+  require_reason_for_waiver: true
+
+implement:
+  enabled: true
+  check_requirements: true
+
+# IDs referenced in plan.md / tasks.md that spec.md does not define
+# (renumbered, invented or stale scope): violation | warning | ignore
+unknown_ids: violation
+
+features:
+  # Glob patterns of feature directory names that --all skips,
+  # e.g. features planned before scopeGuard was introduced.
+  exclude: []

@@ -1,0 +1,61 @@
+name: "scopeGuard for Spec Kit"
+description: "Fail the build when a user story or requirement from spec.md is missing from plan.md, tasks.md or the implementation"
+author: "rlgdev"
+branding:
+  icon: "check-square"
+  color: "green"
+
+inputs:
+  command:
+    description: "check | plan | tasks | implement | report"
+    required: false
+    default: "check"
+  features:
+    description: "'all' to check every feature under specs/, or one feature directory such as specs/001-my-feature"
+    required: false
+    default: "all"
+  implement:
+    description: "With command 'check': also run the implement gate (every carrying task checked off)"
+    required: false
+    default: "false"
+  working-directory:
+    description: "Spec Kit project root (the directory that contains .specify/ and specs/)"
+    required: false
+    default: "."
+  summary:
+    description: "Write a Markdown report to the job summary"
+    required: false
+    default: "true"
+  args:
+    description: "Extra arguments passed to scopeguard (e.g. --report-only or --config path)"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: scopeGuard
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SG_COMMAND: ${{ inputs.command }}
+        SG_FEATURES: ${{ inputs.features }}
+        SG_IMPLEMENT: ${{ inputs.implement }}
+        SG_SUMMARY: ${{ inputs.summary }}
+        SG_ARGS: ${{ inputs.args }}
+        SG_ENGINE: ${{ github.action_path }}/scripts/python/scopeguard.py
+      run: |
+        set -euo pipefail
+        case "$SG_COMMAND" in
+          check|plan|tasks|implement|report) ;;
+          *) echo "::error::scopeGuard: unsupported command '$SG_COMMAND'"; exit 2 ;;
+        esac
+        PY=python3
+        command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1 || PY=python
+        cmd=("$PY" "$SG_ENGINE" "$SG_COMMAND")
+        if [ "$SG_FEATURES" = "all" ]; then cmd+=(--all); else cmd+=(--feature-dir "$SG_FEATURES"); fi
+        if [ "$SG_IMPLEMENT" = "true" ] && [ "$SG_COMMAND" = "check" ]; then cmd+=(--implement); fi
+        if [ "$SG_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cmd+=(--out "$GITHUB_STEP_SUMMARY" --append); fi
+        if [ -n "$SG_ARGS" ]; then read -r -a extra <<< "$SG_ARGS"; cmd+=("${extra[@]}"); fi
+        echo "scopeGuard: ${cmd[*]:1}"
+        "${cmd[@]}"

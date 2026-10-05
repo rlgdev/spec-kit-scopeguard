@@ -1,0 +1,80 @@
+schema_version: "1.0"
+
+extension:
+  id: scopeguard
+  name: "scopeGuard"
+  version: "0.1.0"
+  description: "Deterministic scope gates: no user story or requirement from spec.md is silently dropped by plan, tasks or implement"
+  author: "rlgdev"
+  repository: https://github.com/rlgdev/spec-kit-scopeguard
+  homepage: https://github.com/rlgdev/spec-kit-scopeguard
+  license: MIT
+  category: process
+  effect: read-only
+
+requires:
+  # 0.12.17 is the first release that rewrites extension-local "scripts/..."
+  # paths in command frontmatter to .specify/extensions/<id>/scripts/.
+  speckit_version: ">=0.12.17"
+  tools:
+    - name: python
+      version: ">=3.8"
+      required: false
+      description: "Runs the deterministic checker (standard library only). Without python on PATH the launchers use the Python bundled with specify-cli, or uv."
+
+provides:
+  commands:
+    - name: speckit.scopeguard.inventory
+      file: commands/speckit.scopeguard.inventory.md
+      description: "List every user story and requirement ID in spec.md and state the scope contract for plan and tasks"
+    - name: speckit.scopeguard.plan
+      file: commands/speckit.scopeguard.plan.md
+      description: "Gate: every spec item is accounted for in plan.md (covered, or deferred with a reason)"
+    - name: speckit.scopeguard.tasks
+      file: commands/speckit.scopeguard.tasks.md
+      description: "Gate: every in-scope spec item is carried by at least one task in tasks.md"
+    - name: speckit.scopeguard.implement
+      file: commands/speckit.scopeguard.implement.md
+      description: "Gate: every task carrying an in-scope spec item is checked off"
+    - name: speckit.scopeguard.report
+      file: commands/speckit.scopeguard.report.md
+      description: "Coverage matrix of every spec item across plan, tasks and implement"
+    - name: speckit.scopeguard.compare
+      file: commands/speckit.scopeguard.compare.md
+      description: "Compare scope coverage of two feature directories, e.g. two lab runs of the same spec"
+
+  config:
+    - name: "scopeguard-config.yml"
+      template: "config-template.yml"
+      description: "scopeGuard settings: traced ID prefixes, table section names, waiver rules, enforce/report mode"
+      required: false
+
+hooks:
+  before_plan:
+    command: speckit.scopeguard.inventory
+    optional: false
+    description: "Put the full scope contract (every story and requirement ID) in front of the planner"
+  after_plan:
+    command: speckit.scopeguard.plan
+    optional: false
+    description: "Fail when plan.md leaves out any user story or requirement from spec.md"
+  before_tasks:
+    command: speckit.scopeguard.inventory
+    optional: false
+    description: "Put the in-scope items (not deferred by the plan) in front of the task generator"
+  after_tasks:
+    command: speckit.scopeguard.tasks
+    optional: false
+    description: "Fail when an in-scope user story or requirement has no task"
+  after_implement:
+    command: speckit.scopeguard.implement
+    optional: true
+    prompt: "Run the scopeGuard implement gate (every in-scope item's tasks checked off)?"
+    description: "Report in-scope items whose tasks are still open"
+
+tags:
+  - "scope"
+  - "traceability"
+  - "coverage"
+  - "quality-gate"
+  - "requirements"

@@ -1,0 +1,75 @@
+schema_version: "1.0"
+workflow:
+  id: "scopeguard-sdd"
+  name: "SDD cycle with scopeGuard gates"
+  version: "0.1.0"
+  author: "rlgdev"
+  description: "specify -> plan -> tasks -> implement with deterministic scope gates between phases (requires the scopeguard extension)"
+
+requires:
+  speckit_version: ">=0.8.5"
+
+inputs:
+  spec:
+    type: string
+    required: true
+    prompt: "Describe what you want to build"
+  integration:
+    type: string
+    default: "auto"
+    prompt: "Integration to use ('auto' uses the project's initialized integration)"
+  scopeguard:
+    type: string
+    default: "bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh"
+    prompt: "scopeGuard launcher (on Windows: pwsh -File .specify/extensions/scopeguard/scripts/powershell/scopeguard.ps1)"
+
+steps:
+  - id: specify
+    command: speckit.specify
+    integration: "{{ inputs.integration }}"
+    input:
+      args: "{{ inputs.spec }}"
+
+  - id: review-spec
+    type: gate
+    message: "Review the generated spec before planning."
+    options: [approve, reject]
+    on_reject: abort
+
+  - id: plan
+    command: speckit.plan
+    integration: "{{ inputs.integration }}"
+    input:
+      args: "{{ inputs.spec }}"
+
+  # Hard stop: the run fails here if plan.md dropped any user story or requirement.
+  # Fix plan.md, then: specify workflow resume <run_id>
+  - id: scope-gate-plan
+    type: shell
+    run: "{{ inputs.scopeguard }} plan"
+
+  - id: review-plan
+    type: gate
+    message: "Scope gate passed. Review the plan before generating tasks."
+    options: [approve, reject]
+    on_reject: abort
+
+  - id: tasks
+    command: speckit.tasks
+    integration: "{{ inputs.integration }}"
+    input:
+      args: "{{ inputs.spec }}"
+
+  - id: scope-gate-tasks
+    type: shell
+    run: "{{ inputs.scopeguard }} tasks"
+
+  - id: implement
+    command: speckit.implement
+    integration: "{{ inputs.integration }}"
+    input:
+      args: "{{ inputs.spec }}"
+
+  - id: scope-gate-implement
+    type: shell
+    run: "{{ inputs.scopeguard }} implement"

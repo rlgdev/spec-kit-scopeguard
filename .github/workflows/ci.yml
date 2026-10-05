@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install pytest
+      - run: python -m pytest -q
+
+  launchers:
+    name: launchers (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck scripts/bash/scopeguard.sh
+      - name: bash launcher reproduces the missed user story (expects exit 1)
+        shell: bash
+        working-directory: examples/missing-story
+        run: |
+          set +e
+          bash ../../scripts/bash/scopeguard.sh plan; code=$?
+          test "$code" -eq 1 || { echo "expected exit 1, got $code"; exit 1; }
+      - name: PowerShell launcher reproduces the missed user story (expects exit 1)
+        shell: pwsh
+        working-directory: examples/missing-story
+        run: |
+          & ../../scripts/powershell/scopeguard.ps1 plan
+          if ($LASTEXITCODE -ne 1) { throw "expected exit 1, got $LASTEXITCODE" }
+          & ../../scripts/powershell/scopeguard.ps1 inventory --json | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "inventory failed with $LASTEXITCODE" }
+          exit 0
+
+  spec-kit:
+    name: install into Spec Kit (${{ matrix.speckit }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        speckit: ["specify-cli", "specify-cli==0.12.17"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv tool install "${{ matrix.speckit }}"
+      - name: build release archives
+        run: python3 tools/build.py
+      - name: install extension + preset from the built archives
+        run: |
+          set -euo pipefail
+          (cd dist && python3 -m http.server 8765 >/dev/null 2>&1 &)
+          sleep 2
+          cd "$RUNNER_TEMP"
+          specify init lab --integration claude --script sh --ignore-agent-tools --non-interactive \
+            || specify init lab --integration claude --script sh --ignore-agent-tools
+          cd lab
+          printf 'y\ny\n' | specify extension add scopeguard --from http://localhost:8765/scopeguard.zip
+          specify preset add --from http://localhost:8765/scopeguard-preset.zip
+          specify extension list | grep -i scopeguard
+          grep -q "speckit.scopeguard.plan" .specify/extensions.yml
+          grep -rq "bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan" .claude
+          # the preset appends the Scope Coverage table to the composed plan template
+          git init -q
+          bash .specify/scripts/bash/create-new-feature.sh --json --short-name team-board "Team board"
+          fd=$(ls -d specs/*/ | head -1)
+          cp "$GITHUB_WORKSPACE/examples/missing-story/specs/001-team-board/spec.md" "$fd/spec.md"
+          SPECIFY_FEATURE_DIRECTORY="$fd" bash .specify/scripts/bash/setup-plan.sh --json
+          grep -q "## Scope Coverage" "$fd/plan.md"
+          # the empty plan fails the gate (every item missing) ...
+          set +e
+          bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan --feature-dir "$fd"; code=$?
+          set -e
+          test "$code" -eq 1
+          # ... and the example plan that dropped US3 fails it too
+          cp "$GITHUB_WORKSPACE/examples/missing-story/specs/001-team-board/plan.md" "$fd/plan.md"
+          set +e
+          bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan --feature-dir "$fd" --json > gate.json; code=$?
+          set -e
+          test "$code" -eq 1
+          python3 -c "import json; d=json.load(open('gate.json')); bad={i['id'] for i in d['gates'][0]['items'] if i['verdict']=='violation'}; assert 'US3' in bad, bad"
+
+  action:
+    name: GitHub Action self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: run the action on the example (must fail)
+        id: gate
+        continue-on-error: true
+        uses: ./
+        with:
+          working-directory: examples/missing-story
+      - name: the gate must have failed
+        run: test "${{ steps.gate.outcome }}" = "failure"
+      - name: report mode never fails
+        uses: ./
+        with:
+          command: report
+          working-directory: examples/missing-story

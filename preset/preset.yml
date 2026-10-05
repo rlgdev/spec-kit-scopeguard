@@ -1,0 +1,33 @@
+schema_version: "1.0"
+
+preset:
+  id: "scopeguard-templates"
+  name: "scopeGuard Templates"
+  version: "0.1.0"
+  description: "Appends a Scope Coverage table to the plan and tasks templates so every user story and requirement from spec.md is accounted for (pairs with the scopeguard extension)"
+  author: "rlgdev"
+  repository: "https://github.com/rlgdev/spec-kit-scopeguard"
+  license: "MIT"
+
+requires:
+  speckit_version: ">=0.12.17"
+
+provides:
+  templates:
+    - type: "template"
+      name: "plan-template"
+      file: "templates/plan-template.md"
+      description: "Adds the Scope Coverage table (one row per user story and requirement ID) to plan.md"
+      strategy: "append"
+
+    - type: "template"
+      name: "tasks-template"
+      file: "templates/tasks-template.md"
+      description: "Adds the Scope Coverage mapping (requirement ID -> task IDs) to tasks.md"
+      strategy: "append"
+
+tags:
+  - "scope"
+  - "traceability"
+  - "coverage"
+  - "templates"

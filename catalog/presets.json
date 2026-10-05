@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-10-05T00:00:00Z",
+  "catalog_url": "https://raw.githubusercontent.com/rlgdev/spec-kit-scopeguard/main/catalog/presets.json",
+  "presets": {
+    "scopeguard-templates": {
+      "name": "scopeGuard Templates",
+      "id": "scopeguard-templates",
+      "version": "0.1.0",
+      "description": "Appends a Scope Coverage table to the plan and tasks templates so every user story and requirement from spec.md is accounted for.",
+      "author": "rlgdev",
+      "repository": "https://github.com/rlgdev/spec-kit-scopeguard",
+      "download_url": "https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.1.0/scopeguard-preset.zip",
+      "homepage": "https://github.com/rlgdev/spec-kit-scopeguard",
+      "documentation": "https://github.com/rlgdev/spec-kit-scopeguard/blob/main/preset/README.md",
+      "license": "MIT",
+      "requires": {
+        "speckit_version": ">=0.12.17"
+      },
+      "provides": {
+        "templates": 2
+      },
+      "tags": [
+        "scope",
+        "traceability",
+        "coverage",
+        "templates"
+      ],
+      "created_at": "2026-10-05T00:00:00Z",
+      "updated_at": "2026-10-05T00:00:00Z"
+    }
+  }
+}
