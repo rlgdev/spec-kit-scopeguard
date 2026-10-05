@@ -11,8 +11,9 @@
     deferred -> ONLY when spec.md or the user explicitly puts it out of scope;
                 the Reason column is mandatory
 
-  The after_plan gate (/speckit.scopeguard.plan) checks this table, resolves missing IDs in the
-  plan (up to 4 iterations) and escalates with a problem report if it cannot.
+  The scopeGuard scope gate (a mandatory step of /speckit.plan, or the after_plan hook) checks
+  this table, resolves missing IDs in the plan (autocorrect) and escalates with a problem report
+  if it cannot.
 -->
 
 | ID | Title | Status | Plan reference | Reason (required if deferred) |

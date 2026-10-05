@@ -4,6 +4,36 @@ All notable changes to scopeGuard are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-05
+
+### Added
+
+- **Inline integration (new default).** The scopeguard-templates preset wraps `/speckit.plan` and
+  `/speckit.tasks` with two mandatory steps: the scope inventory right after Setup, and the scope
+  gate (with autocorrect) before the post-execution hooks and the Completion Report. The gate is
+  now part of the regular Spec Kit commands, not a separate command.
+- One config file, `scopeguard-config.yml`, with new top-level settings:
+  - `integration: inline | hooks`
+  - `autocorrect.enabled`: `false` means the gate reports the gaps and stops the command.
+  - `autocorrect.max_iterations` (default 4).
+
+  Environment overrides: `SCOPEGUARD_INTEGRATION`, `SCOPEGUARD_AUTOCORRECT`,
+  `SCOPEGUARD_MAX_ITERATIONS`. `local-config.yml` (Spec Kit convention) is read for personal
+  overrides.
+- `configure` command (`/speckit.scopeguard.configure` and `scopeguard.sh configure [--dry-run]`).
+  It applies the config by switching the scopeGuard hooks on or off in `.specify/extensions.yml`
+  (formatting preserved, other extensions untouched), and prints the settings in force.
+- `--via inline|hook`: the inline steps and the hook commands check the configured integration at
+  run time, and the one that is not configured is skipped. The gate never runs twice, even before
+  `configure` is run.
+- Fallback: `integration: inline` without the preset (or with the preset disabled) runs through the
+  hooks, and `configure` says what to install.
+
+### Changed
+
+- `remediation.max_iterations` is now `autocorrect.max_iterations`. The old key is still read.
+- The preset now also provides the two command wraps. Its description changed to match.
+
 ## [0.2.0] - 2026-10-05
 
 ### Added

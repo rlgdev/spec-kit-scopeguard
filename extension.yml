@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: scopeguard
   name: "scopeGuard"
-  version: "0.2.0"
+  version: "0.3.0"
   description: "Deterministic scope gates that find and resolve user stories or requirements from spec.md dropped by plan or tasks, and escalate with a problem report when they cannot"
   author: "rlgdev"
   repository: https://github.com/rlgdev/spec-kit-scopeguard
@@ -29,10 +29,10 @@ provides:
       description: "List every user story and requirement ID in spec.md and state the scope contract for plan and tasks"
     - name: speckit.scopeguard.plan
       file: commands/speckit.scopeguard.plan.md
-      description: "Gate: find spec items missing from plan.md and resolve them in the plan (max 4 iterations, then escalate)"
+      description: "Gate: find spec items missing from plan.md and resolve them in the plan (autocorrect, then escalate)"
     - name: speckit.scopeguard.tasks
       file: commands/speckit.scopeguard.tasks.md
-      description: "Gate: find in-scope spec items without tasks and add the tasks (max 4 iterations, then escalate)"
+      description: "Gate: find in-scope spec items without tasks and add the tasks (autocorrect, then escalate)"
     - name: speckit.scopeguard.implement
       file: commands/speckit.scopeguard.implement.md
       description: "Gate: every task carrying an in-scope spec item is checked off"
@@ -42,30 +42,33 @@ provides:
     - name: speckit.scopeguard.compare
       file: commands/speckit.scopeguard.compare.md
       description: "Compare scope coverage of two feature directories, e.g. two lab runs of the same spec"
+    - name: speckit.scopeguard.configure
+      file: commands/speckit.scopeguard.configure.md
+      description: "Apply scopeguard-config.yml: inline gates inside /speckit.plan and /speckit.tasks or hook commands, autocorrect iterations"
 
   config:
     - name: "scopeguard-config.yml"
       template: "config-template.yml"
-      description: "scopeGuard settings: traced ID prefixes, table section names, waiver rules, resolution iterations, enforce/report mode"
+      description: "scopeGuard settings: integration (inline or hooks), autocorrect on/off and iterations, gates, traced ID prefixes, enforce/report mode"
       required: false
 
 hooks:
   before_plan:
     command: speckit.scopeguard.inventory
     optional: false
-    description: "Put the full scope contract (every story and requirement ID) in front of the planner"
+    description: "(integration: hooks) Put the full scope contract in front of the planner"
   after_plan:
     command: speckit.scopeguard.plan
     optional: false
-    description: "Resolve every user story or requirement from spec.md that plan.md left out (escalate after 4 iterations)"
+    description: "(integration: hooks) Resolve every user story or requirement plan.md left out, escalate after the autocorrect limit"
   before_tasks:
     command: speckit.scopeguard.inventory
     optional: false
-    description: "Put the in-scope items (not deferred by the plan) in front of the task generator"
+    description: "(integration: hooks) Put the in-scope items in front of the task generator"
   after_tasks:
     command: speckit.scopeguard.tasks
     optional: false
-    description: "Add tasks for every in-scope user story or requirement without one (escalate after 4 iterations)"
+    description: "(integration: hooks) Add tasks for every in-scope item without one, escalate after the autocorrect limit"
   after_implement:
     command: speckit.scopeguard.implement
     optional: true

@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 EXIT_PASS = 0
 EXIT_FAIL = 1
@@ -45,9 +45,26 @@ EXIT_ESCALATE = 3  # still failing after the last allowed resolution iteration
 
 TOOL = "scopeguard"
 CONFIG_RELATIVE = Path(".specify") / "extensions" / "scopeguard" / "scopeguard-config.yml"
-CONFIG_LOCAL_RELATIVE = Path(".specify") / "extensions" / "scopeguard" / "scopeguard-config.local.yml"
+CONFIG_LOCAL_RELATIVES = (
+    Path(".specify") / "extensions" / "scopeguard" / "local-config.yml",  # Spec Kit convention
+    Path(".specify") / "extensions" / "scopeguard" / "scopeguard-config.local.yml",
+)
+EXTENSIONS_YML = Path(".specify") / "extensions.yml"
+INLINE_PRESET_DIR = Path(".specify") / "presets" / "scopeguard-templates"
+INLINE_COMMANDS = ("speckit.plan", "speckit.tasks")
 
 DEFAULT_CONFIG: Dict[str, Any] = {
+    # inline: the gates are mandatory steps inside /speckit.plan and /speckit.tasks
+    #         (needs the scopeguard-templates preset; falls back to hooks without it).
+    # hooks:  the gates run as separate scopeGuard commands triggered by Spec Kit hooks.
+    "integration": "inline",
+    "autocorrect": {
+        # true:  a failing plan/tasks gate makes the agent fix the artifact and re-check.
+        # false: a failing gate only reports the violations and stops the command.
+        "enabled": True,
+        # resolve-and-recheck iterations before the gate escalates with a problem report.
+        "max_iterations": 4,
+    },
     # enforce: violations make the gate exit 1.  report: always exit 0 (measure only).
     "mode": "enforce",
     "ids": {
@@ -82,11 +99,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     # How to treat IDs referenced in plan/tasks that spec.md does not define.
     "unknown_ids": "violation",  # violation | warning | ignore
-    "remediation": {
-        # How many resolve-and-recheck iterations the agent gets before the gate escalates
-        # (exit code 3 + a problem report) instead of asking for another iteration.
-        "max_iterations": 4,
-    },
     "features": {
         "exclude": [],  # glob patterns of feature directory names skipped by --all
     },
@@ -263,9 +275,18 @@ def _load_yaml_file(path: Path) -> Dict[str, Any]:
     return data
 
 
+def _as_bool(value: Any, name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "yes", "on", "1", "false", "no", "off", "0"):
+        return value.strip().lower() in ("true", "yes", "on", "1")
+    raise ScopeGuardError(f"config: {name} must be true or false, got {value!r}")
+
+
 def load_config(root: Path, explicit: Optional[str]) -> Tuple[Dict[str, Any], List[str]]:
     sources: List[str] = []
     config = copy.deepcopy(DEFAULT_CONFIG)
+    user: Dict[str, Any] = {}
     paths: List[Path] = []
     if explicit:
         p = Path(explicit)
@@ -275,17 +296,43 @@ def load_config(root: Path, explicit: Optional[str]) -> Tuple[Dict[str, Any], Li
             raise ScopeGuardError(f"config file not found: {explicit}")
         paths.append(p)
     else:
-        for rel in (CONFIG_RELATIVE, CONFIG_LOCAL_RELATIVE):
+        for rel in (CONFIG_RELATIVE,) + CONFIG_LOCAL_RELATIVES:
             if (root / rel).is_file():
                 paths.append(root / rel)
     for p in paths:
-        config = _deep_merge(config, _load_yaml_file(p))
+        user = _deep_merge(user, _load_yaml_file(p))
         sources.append(str(p))
-    mode_env = os.environ.get("SCOPEGUARD_MODE")
-    if mode_env:
-        config["mode"] = mode_env
+    config = _deep_merge(config, user)
+
+    # v0.2 name for the iteration limit
+    legacy = (user.get("remediation") or {}) if isinstance(user.get("remediation"), dict) else {}
+    if "max_iterations" in legacy and "max_iterations" not in (user.get("autocorrect") or {}):
+        config["autocorrect"]["max_iterations"] = legacy["max_iterations"]
+
+    for env, key in (("SCOPEGUARD_MODE", "mode"), ("SCOPEGUARD_INTEGRATION", "integration")):
+        if os.environ.get(env):
+            config[key] = os.environ[env].strip()
+    if os.environ.get("SCOPEGUARD_MAX_ITERATIONS"):
+        config["autocorrect"]["max_iterations"] = os.environ["SCOPEGUARD_MAX_ITERATIONS"].strip()
+    if os.environ.get("SCOPEGUARD_AUTOCORRECT"):
+        config["autocorrect"]["enabled"] = os.environ["SCOPEGUARD_AUTOCORRECT"].strip()
+
     if config.get("mode") not in ("enforce", "report"):
         raise ScopeGuardError(f"config: mode must be 'enforce' or 'report', got {config.get('mode')!r}")
+    if config.get("integration") not in ("inline", "hooks"):
+        raise ScopeGuardError(f"config: integration must be 'inline' or 'hooks', got {config.get('integration')!r}")
+    if not isinstance(config.get("autocorrect"), dict):
+        raise ScopeGuardError("config: autocorrect must be a mapping with enabled and max_iterations")
+    config["autocorrect"]["enabled"] = _as_bool(config["autocorrect"].get("enabled", True), "autocorrect.enabled")
+    try:
+        max_iterations = int(config["autocorrect"].get("max_iterations", 4))
+    except (TypeError, ValueError):
+        raise ScopeGuardError("config: autocorrect.max_iterations must be a whole number")
+    if max_iterations < 1:
+        raise ScopeGuardError("config: autocorrect.max_iterations must be at least 1 (use autocorrect.enabled: false to switch autocorrect off)")
+    config["autocorrect"]["max_iterations"] = max_iterations
+    for gate in ("plan", "tasks", "implement"):
+        config[gate]["enabled"] = _as_bool(config[gate].get("enabled", True), f"{gate}.enabled")
     if config.get("unknown_ids") not in (VIOLATION, WARNING, "ignore"):
         raise ScopeGuardError("config: unknown_ids must be violation, warning or ignore")
     prefixes = config["ids"].get("requirement_prefixes") or []
@@ -297,6 +344,33 @@ def load_config(root: Path, explicit: Optional[str]) -> Tuple[Dict[str, Any], Li
     except re.error as exc:
         raise ScopeGuardError(f"config: invalid ids.story_pattern: {exc}")
     return config, sources
+
+
+def inline_preset_installed(root: Path) -> bool:
+    """True when the scopeguard-templates preset with the inline command wraps is installed and enabled."""
+    preset = root / INLINE_PRESET_DIR
+    if not all((preset / "commands" / f"{name}.md").is_file() for name in INLINE_COMMANDS):
+        return False
+    registry = root / ".specify" / "presets" / ".registry"
+    if registry.is_file():
+        try:
+            entry = json.loads(read_text(registry)).get("presets", {}).get("scopeguard-templates")
+            if isinstance(entry, dict) and entry.get("enabled") is False:
+                return False
+        except (ValueError, AttributeError):
+            pass
+    return True
+
+
+def effective_integration(root: Path, config: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+    """Return (integration actually in force, note). inline falls back to hooks without the preset."""
+    wanted = config["integration"]
+    if wanted == "inline" and not inline_preset_installed(root):
+        return "hooks", (
+            "integration is 'inline' but the scopeguard-templates preset (v0.3.0+) is not installed, "
+            "so the gates run through the hooks instead"
+        )
+    return wanted, None
 
 
 # --------------------------------------------------------------------------- #
@@ -538,6 +612,7 @@ class GateResult:
     iteration: Optional[int] = None
     max_iterations: Optional[int] = None
     escalated: bool = False
+    autocorrect: bool = True
     escalation_report: Optional[Path] = None
     history: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -1328,6 +1403,13 @@ def _iteration_line(result: GateResult, root: Path) -> str:
     it, mx = result.iteration, result.max_iterations
     if result.verdict == "pass":
         return f"ITERATION {it} of {mx}: PASS - nothing left to resolve."
+    if result.escalated and not result.autocorrect:
+        report = rel_path(result.escalation_report, root) if result.escalation_report else "(not written)"
+        return (
+            "AUTOCORRECT OFF (autocorrect.enabled: false): the gate does not fix anything. Report the "
+            f"violations above to the user (summary in {report}) and stop the calling command; "
+            "do not continue as if it succeeded."
+        )
     if result.escalated:
         report = rel_path(result.escalation_report, root) if result.escalation_report else "(not written)"
         return (
@@ -1427,18 +1509,35 @@ def render_escalation(result: GateResult, root: Path) -> str:
     unresolved = [r for r in result.items if r.verdict == VIOLATION]
     other = [f for f in result.findings if f.level == VIOLATION]
     artifact = {"plan": "plan.md", "tasks": "tasks.md", "implement": "tasks.md"}.get(result.gate, "the artifact")
+    if not result.autocorrect:
+        outcome = (
+            f"{len(unresolved)} scope item(s) missing; autocorrect is off (autocorrect.enabled: false), "
+            f"so nothing was resolved ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        )
+        intro = (
+            f"The {result.gate} gate found the gaps below and, with autocorrect switched off, stopped without "
+            f"changing anything. Fix `{{artifact}}` yourself (or switch autocorrect on in "
+            "scopeguard-config.yml) and run the command again."
+        )
+    else:
+        outcome = (
+            f"unresolved after {result.iteration} of {result.max_iterations} resolution iterations "
+            f"({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        )
+        intro = (
+            f"The agent could not bring every scope item into the {result.gate} artifact. Each item below says "
+            "what was tried, what blocks it and which decision is needed. Fix the blocker (or take the "
+            "decision), then run the gate again."
+        )
     out = [
         f"# scopeGuard escalation: {result.gate} gate",
         "",
         f"- **Feature**: `{rel_path(result.feature_dir, root)}`",
-        f"- **Result**: unresolved after {result.iteration} of {result.max_iterations} resolution iterations "
-        f"({datetime.now().strftime('%Y-%m-%d %H:%M')})",
+        f"- **Result**: {outcome}",
         f"- **Still open**: {len(unresolved)} scope item(s), {len(other)} other violation(s)",
         f"- **Artifact being resolved**: `{artifact}`",
         "",
-        "The agent could not bring every scope item into the "
-        f"{result.gate} artifact. Each item below says what was tried, what blocks it and which decision is "
-        "needed. Fix the blocker (or take the decision), then run the gate again.",
+        intro.replace("{artifact}", artifact),
         "",
     ]
     if result.history:
@@ -1460,6 +1559,9 @@ def render_escalation(result: GateResult, root: Path) -> str:
                 "",
             ]
             out += [f"  > {line}" if line.strip() else "  >" for line in (r.item.excerpt or "").split("\n")]
+            if not result.autocorrect:
+                out.append("")
+                continue
             out += [
                 "",
                 "- **Attempted**: TODO(agent): what was changed in each iteration to include this item",
@@ -1473,11 +1575,15 @@ def render_escalation(result: GateResult, root: Path) -> str:
         out += ["## Other violations", ""]
         for f in other:
             out.append(f"- {f.message}" + (f" (`{f.location}`)" if f.location else ""))
-        out += ["", "- **Blocker / decision needed**: TODO(agent)", ""]
+        if result.autocorrect:
+            out += ["", "- **Blocker / decision needed**: TODO(agent)", ""]
     return "\n".join(out).rstrip() + "\n"
 
 
-def apply_iteration(result: GateResult, iteration: int, max_iterations: int, root: Path) -> None:
+def apply_iteration(result: GateResult, iteration: int, max_iterations: int, root: Path, autocorrect: bool = True) -> None:
+    result.autocorrect = autocorrect
+    if not autocorrect:
+        max_iterations = 0  # report and stop at the first failing check
     result.iteration = iteration
     result.max_iterations = max_iterations
     result.history = update_history(result)
@@ -1489,6 +1595,156 @@ def apply_iteration(result: GateResult, iteration: int, max_iterations: int, roo
         result.escalation_report = report
     elif result.verdict == "pass" and report.is_file():
         report.unlink()  # a stale problem report from an earlier escalation
+
+
+# --------------------------------------------------------------------------- #
+# configure: apply the config to Spec Kit's hook registry                       #
+# --------------------------------------------------------------------------- #
+
+HOOK_GATES = {
+    # (event, command) -> gate whose enabled flag also applies
+    ("before_plan", "speckit.scopeguard.inventory"): "plan",
+    ("after_plan", "speckit.scopeguard.plan"): "plan",
+    ("before_tasks", "speckit.scopeguard.inventory"): "tasks",
+    ("after_tasks", "speckit.scopeguard.tasks"): "tasks",
+    ("after_implement", "speckit.scopeguard.implement"): "implement",
+}
+
+
+def desired_hook_states(integration: str, config: Dict[str, Any]) -> Dict[Tuple[str, str], bool]:
+    states = {}
+    for (event, command), gate in HOOK_GATES.items():
+        enabled = bool(config[gate].get("enabled", True))
+        if gate in ("plan", "tasks"):
+            enabled = enabled and integration == "hooks"
+        states[(event, command)] = enabled
+    return states
+
+
+def _scalar(value: str) -> str:
+    return value.strip().strip("'\"")
+
+
+def set_hook_flags(text: str, desired: Dict[Tuple[str, str], bool]) -> Tuple[str, List[Dict[str, Any]]]:
+    """Set `enabled:` on scopeguard hook entries of a Spec Kit extensions.yml, preserving formatting."""
+    lines = text.split("\n")
+    out: List[str] = []
+    found: List[Dict[str, Any]] = []
+    in_hooks = False
+    event: Optional[str] = None
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.strip()
+        if stripped and indent == 0:
+            in_hooks = stripped == "hooks:"
+            event = None
+            out.append(line)
+            i += 1
+            continue
+        item = re.match(r"^(\s*)-\s+(.*)$", line)
+        if in_hooks and item is None:
+            ev = re.match(r"^\s+([A-Za-z0-9_]+):\s*$", line)
+            if ev:
+                event = ev.group(1)
+            out.append(line)
+            i += 1
+            continue
+        if not (in_hooks and item and event):
+            out.append(line)
+            i += 1
+            continue
+        item_indent = len(item.group(1))
+        block = [line]
+        j = i + 1
+        while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip(" ")) > item_indent):
+            block.append(lines[j])
+            j += 1
+        fields: Dict[str, Tuple[int, str]] = {}
+        for k, bline in enumerate(block):
+            body = bline.strip()[2:] if k == 0 else bline.strip()
+            m = re.match(r"^([A-Za-z0-9_]+):\s*(.*)$", body)
+            if m and (k == 0 or len(bline) - len(bline.lstrip(" ")) == item_indent + 2):
+                fields[m.group(1)] = (k, m.group(2))
+        ext = _scalar(fields.get("extension", (0, ""))[1])
+        cmd = _scalar(fields.get("command", (0, ""))[1])
+        key = (event, cmd)
+        if ext == "scopeguard" and key in desired:
+            want = desired[key]
+            current = _scalar(fields["enabled"][1]).lower() not in ("false", "no", "off") if "enabled" in fields else True
+            if "enabled" in fields:
+                k = fields["enabled"][0]
+                prefix = block[k][: len(block[k]) - len(block[k].lstrip(" "))]
+                if k == 0:
+                    block[0] = re.sub(r"enabled:\s*\S+", f"enabled: {'true' if want else 'false'}", block[0])
+                else:
+                    block[k] = f"{prefix}enabled: {'true' if want else 'false'}"
+            else:
+                block.insert(1, " " * (item_indent + 2) + f"enabled: {'true' if want else 'false'}")
+            found.append({"event": event, "command": cmd, "was": current, "now": want})
+        out.extend(block)
+        i = j
+    return "\n".join(out), found
+
+
+def configure(root: Path, config: Dict[str, Any], sources: List[str], dry_run: bool) -> Tuple[str, Dict[str, Any], int]:
+    eff, note = effective_integration(root, config)
+    ext_yml = root / EXTENSIONS_YML
+    if not ext_yml.is_file():
+        raise ScopeGuardError(f"{EXTENSIONS_YML.as_posix()} not found - is the scopeguard extension installed in {root}?")
+    original = read_text(ext_yml)
+    updated, found = set_hook_flags(original, desired_hook_states(eff, config))
+    if not found:
+        raise ScopeGuardError(
+            "no scopeguard hooks found in .specify/extensions.yml - reinstall the extension "
+            "(specify extension add scopeguard ... --force)"
+        )
+    changed = [f for f in found if f["was"] != f["now"]]
+    if changed and not dry_run:
+        try:
+            import yaml  # type: ignore
+
+            yaml.safe_load(updated)  # never write a file Spec Kit cannot read
+        except ImportError:
+            pass
+        except Exception as exc:
+            raise ScopeGuardError(f"refusing to write .specify/extensions.yml: result would not parse ({exc})")
+        with open(ext_yml, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(updated)
+
+    ac = config["autocorrect"]
+    out = [
+        f"scopeGuard {__version__} | configure{' (dry run)' if dry_run else ''}",
+        f"config: {', '.join(rel_path(Path(s), root) for s in sources) or 'defaults (no scopeguard-config.yml found)'}",
+        "",
+        f"  integration   : {config['integration']}" + (f" -> running as '{eff}'" if eff != config["integration"] else ""),
+        f"  autocorrect   : {'on, max ' + str(ac['max_iterations']) + ' iteration(s), then escalate' if ac['enabled'] else 'off (gates report and stop)'}",
+        f"  gates         : plan {'on' if config['plan']['enabled'] else 'off'}, tasks {'on' if config['tasks']['enabled'] else 'off'}, "
+        f"implement {'on' if config['implement']['enabled'] else 'off'}",
+        f"  mode          : {config['mode']}",
+        "",
+    ]
+    if eff == "inline":
+        out.append("  /speckit.plan and /speckit.tasks run the scope gate as a mandatory step of their own.")
+    else:
+        out.append("  The scope gates run as separate scopeGuard commands from the Spec Kit hooks.")
+    if note:
+        out += ["", f"  NOTE: {note}.",
+                "  Install it with: specify preset add --from "
+                "https://github.com/rlgdev/spec-kit-scopeguard/releases/latest/download/scopeguard-preset.zip"]
+    out += ["", "  Hooks in .specify/extensions.yml:"]
+    for f in found:
+        change = "" if f["was"] == f["now"] else f"   (was {'on' if f['was'] else 'off'})"
+        out.append(f"    {f['event']:<16} {f['command']:<32} {'on' if f['now'] else 'off'}{change}")
+    out += ["", f"  {len(changed)} hook setting(s) {'would change' if dry_run else 'changed'}."]
+    data = {
+        "tool": TOOL, "version": __version__, "command": "configure", "dry_run": dry_run,
+        "integration": config["integration"], "effective_integration": eff, "note": note,
+        "autocorrect": ac, "gates": {g: config[g]["enabled"] for g in ("plan", "tasks", "implement")},
+        "mode": config["mode"], "hooks": found, "changed": len(changed),
+    }
+    return "\n".join(out), data, EXIT_PASS
 
 
 # --------------------------------------------------------------------------- #
@@ -1729,7 +1985,12 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--iteration", type=int, metavar="N",
         help="resolution loop: N resolve-and-recheck iterations done so far (0 = first check). "
-        "Records history; at N >= remediation.max_iterations a failing gate escalates (exit 3, problem report)",
+        "Records history; at N >= autocorrect.max_iterations a failing gate escalates (exit 3, problem report)",
+    )
+    common.add_argument(
+        "--via", choices=("inline", "hook"),
+        help="who is calling: the inline step inside /speckit.plan|tasks or a Spec Kit hook. "
+        "The call is skipped (exit 0) when the configured integration says the other one runs the gate",
     )
 
     parser = argparse.ArgumentParser(
@@ -1747,6 +2008,11 @@ def build_parser() -> argparse.ArgumentParser:
     check = sub.add_parser("check", parents=[common], help="run every gate whose artifact exists (plan, tasks)")
     check.add_argument("--implement", action="store_true", help="include the implement gate")
     sub.add_parser("report", parents=[common], help="coverage matrix across all phases (informational)")
+    configure_parser = sub.add_parser(
+        "configure", parents=[common],
+        help="apply scopeguard-config.yml: switch the scopeGuard hooks on or off for the chosen integration",
+    )
+    configure_parser.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
     cmp_parser = sub.add_parser("compare", parents=[common], help="compare scope coverage of two feature directories (lab runs)")
     cmp_parser.add_argument("dir_a", help="first feature directory (run A)")
     cmp_parser.add_argument("dir_b", help="second feature directory (run B)")
@@ -1772,6 +2038,38 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         if args.report_only:
             config["mode"] = "report"
         scheme = IdScheme(config)
+
+        if args.command == "configure":
+            text, data, code = configure(root, config, sources, args.dry_run)
+            print(json.dumps(data, indent=2) if fmt == "json" else text)
+            return code
+
+        integration_note: Optional[str] = None
+        if getattr(args, "via", None):
+            eff, integration_note = effective_integration(root, config)
+            wanted = "inline" if args.via == "inline" else "hooks"
+            if eff != wanted:
+                if eff == "inline":
+                    msg = (
+                        f"scopeGuard: {args.command} skipped here - integration is 'inline', so this step runs "
+                        "inside /speckit.plan and /speckit.tasks. Nothing to do; continue. (Run the scopeguard "
+                        "'configure' command to switch these hooks off.)"
+                    )
+                else:
+                    msg = (
+                        f"scopeGuard: {args.command} skipped here - integration is '{eff}', so this step runs "
+                        "through the scopeGuard hooks instead. Nothing to do; continue."
+                    )
+                    if integration_note:
+                        msg += f" Note: {integration_note}."
+                if fmt == "json":
+                    print(json.dumps({"tool": TOOL, "version": __version__, "command": args.command,
+                                      "verdict": "skipped", "integration": eff, "message": msg}, indent=2))
+                else:
+                    print(msg)
+                return EXIT_PASS
+            if integration_note and fmt != "json":
+                print(f"scopeGuard: note: {integration_note}.")
 
         if args.command == "compare":
             labels = [s.strip() for s in args.labels.split(",")] + ["A", "B"]
@@ -1855,14 +2153,11 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                 fn = {"plan": gate_plan, "tasks": gate_tasks, "implement": gate_implement}[gate]
                 results.append(fn(fd, spec, scheme, config))
 
-        max_iterations = int(config.get("remediation", {}).get("max_iterations", 4))
-        if max_iterations < 1:
-            raise ScopeGuardError("config: remediation.max_iterations must be at least 1")
         if args.iteration is not None:
             if args.iteration < 0:
                 raise ScopeGuardError("--iteration must be 0 or greater")
             for r in results:
-                apply_iteration(r, args.iteration, max_iterations, root)
+                apply_iteration(r, args.iteration, config["autocorrect"]["max_iterations"], root, config["autocorrect"]["enabled"])
         failed = any(r.verdict == "fail" for r in results)
         escalated = any(r.escalated for r in results)
         if fmt == "json":

@@ -5,9 +5,10 @@
 
 **Deterministic scope gates for [GitHub Spec Kit](https://github.com/github/spec-kit).**
 No user story or requirement from `spec.md` can be dropped silently by `/speckit.plan`,
-`/speckit.tasks` or `/speckit.implement`. When one is missing, scopeGuard has the agent put it back
-into the plan or task list. If that still fails after 4 iterations, it stops and hands you a
-problem report.
+`/speckit.tasks` or `/speckit.implement`. The scope gate runs as a mandatory step inside
+`/speckit.plan` and `/speckit.tasks`. When an item is missing, the agent puts it back into the plan or
+task list. If that still fails after the configured number of iterations (default 4), the agent
+stops and hands you a problem report. All of this is set in one config file.
 
 ## Why
 
@@ -26,13 +27,22 @@ left out has to be written down as a deferral with a reason.
 
 ## How it works
 
-| Phase | Hook (automatic) | Gate | Passes when |
-|-------|------------------|------|-------------|
-| before plan | `before_plan` → `/speckit.scopeguard.inventory` | – | prints every scope ID and the scope contract for the planner |
-| after plan | `after_plan` → `/speckit.scopeguard.plan` | **plan** + resolve | every ID has a row in plan.md's `## Scope Coverage` table: `covered` (with where), or `deferred` (with a reason) |
-| before tasks | `before_tasks` → `/speckit.scopeguard.inventory` | – | prints the in-scope IDs (not deferred by the plan) |
-| after tasks | `after_tasks` → `/speckit.scopeguard.tasks` | **tasks** + resolve | every in-scope story has `[USn]` tasks and every in-scope requirement is named by a task or mapped in tasks.md's coverage table |
-| after implement | `after_implement` (optional) → `/speckit.scopeguard.implement` | **implement** | every task that carries an in-scope item is checked off |
+By default (`integration: inline`) scopeGuard is part of the regular Spec Kit commands. The
+preset wraps `/speckit.plan` and `/speckit.tasks` with two mandatory steps, so there is no
+separate command to run:
+
+| Command | Step | What happens |
+|---------|------|--------------|
+| `/speckit.plan` | **(A) scope inventory**, right after Setup | prints every scope ID and the scope contract the plan must satisfy |
+| `/speckit.plan` | **(B) scope gate**, before the post-execution hooks and the Completion Report | every ID needs a row in plan.md's `## Scope Coverage` table: `covered` (with where), or `deferred` (with a reason). Missing items are fixed (autocorrect) |
+| `/speckit.tasks` | **(A) scope inventory**, right after Setup | prints the in-scope IDs (not deferred by the plan) |
+| `/speckit.tasks` | **(B) scope gate**, before the post-execution hooks and the Completion Report | every in-scope story has `[USn]` tasks and every in-scope requirement is named by a task or mapped in tasks.md's coverage table. Missing items are fixed (autocorrect) |
+| after `/speckit.implement` | optional hook → `/speckit.scopeguard.implement` | every task that carries an in-scope item is checked off |
+
+With `integration: hooks` the same gates run as separate scopeGuard commands
+(`/speckit.scopeguard.inventory`, `/speckit.scopeguard.plan`, `/speckit.scopeguard.tasks`). Spec Kit's
+`before_plan`, `after_plan`, `before_tasks` and `after_tasks` hooks trigger them.
+[Configuration](#configuration) shows how to switch.
 
 Each item gets a verdict: **pass**, **violation** or **waived** (deferred with a reason, always shown).
 Exit codes: `0` pass, `1` violations to resolve, `2` setup error, `3` escalated (still failing
@@ -40,8 +50,8 @@ after the last allowed iteration).
 
 ### Resolve, re-check, escalate
 
-The plan and tasks gates do more than report. Inside `/speckit.plan` and `/speckit.tasks` they run
-a bounded loop:
+The plan and tasks gates do more than report. With autocorrect on (the default) they run a
+bounded loop:
 
 1. **Check.** The script lists every missing or invalid item under `RESOLVE`, with that item's text from `spec.md`.
 2. **Resolve.** The agent adds the missing item to the artifact.
@@ -50,14 +60,16 @@ a bounded loop:
 
    It never edits `spec.md`, and it never defers an item without a reason from the spec or from you.
 3. **Re-check** with the next `--iteration`. The loop repeats until the gate passes, for at most
-   `remediation.max_iterations` (default **4**) resolve-and-recheck iterations.
+   `autocorrect.max_iterations` (default **4**) resolve-and-recheck iterations.
 4. **Escalate.** If items are still open after the last iteration, the script exits `3` and
    writes `scopeguard-escalation-<gate>.md` into the feature directory. The agent then completes
    the report: for each unresolved item, what it tried, the blocker, and the decision it needs from you.
    It reports this back to you and stops the command, instead of looping or claiming success.
 
 If an item can only be included with information or a decision that only you can give, the agent
-leaves it open, so you get a problem report instead of a guess. Iteration history is kept in
+leaves it open, so you get a problem report instead of a guess. With `autocorrect.enabled: false`
+the gate does not fix anything: it reports the gaps and stops the command at the first failing
+check. Iteration history is kept in
 `<feature>/.scopeguard/history-<gate>.json`.
 [`examples/escalation`](examples/escalation) shows a real case, a story that conflicts with the
 constitution, along with the problem report an agent produced for it.
@@ -71,15 +83,21 @@ Python that ships with `specify-cli`, or `uv`.
 From your Spec Kit project root:
 
 ```bash
-# 1. the extension: commands, hooks and the checker
-specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.2.0/scopeguard.zip
+# 1. the extension: the checker, its commands and hooks, and the config file
+specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.3.0/scopeguard.zip
 
-# 2. the preset (recommended): adds the "Scope Coverage" tables to the plan and tasks templates
-specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.2.0/scopeguard-preset.zip
+# 2. the preset: makes the gate a step of /speckit.plan and /speckit.tasks,
+#    and adds the "Scope Coverage" tables to the plan and tasks templates
+specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.3.0/scopeguard-preset.zip
+
+# 3. apply the config (default: gates inline in /speckit.plan and /speckit.tasks, scopeGuard hooks off)
+bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
+#    Windows: .specify/extensions/scopeguard/scripts/powershell/scopeguard.ps1 configure
+#    or, inside your agent: /speckit.scopeguard.configure
 ```
 
 Spec Kit asks you to confirm installs from a URL; answer `y`. Use `releases/latest/download/...`
-instead of `releases/download/v0.2.0/...` to always get the newest release.
+instead of `releases/download/v0.3.0/...` to always get the newest release.
 
 <details>
 <summary>Install through a catalog (for teams)</summary>
@@ -94,12 +112,17 @@ specify preset add scopeguard-templates
 
 </details>
 
-To upgrade an existing install, add `--force` to the extension command, and run
-`specify preset remove scopeguard-templates` before adding the new preset. Your
-`scopeguard-config.yml` is kept.
+To upgrade an existing install:
 
-Check it worked: `specify extension list` shows **scopeGuard**, and `.specify/extensions.yml`
-lists the five hooks. Then use Spec Kit as usual. The gates run by themselves.
+1. Add `--force` to the extension command.
+2. Run `specify preset remove scopeguard-templates` before adding the new preset.
+3. Run step 3 again.
+
+Your `scopeguard-config.yml` is kept. A v0.2 `remediation.max_iterations` setting is still read.
+
+Check it worked: `configure` prints `integration: inline`, and the hook table shows the plan and tasks
+hooks `off`. Then use Spec Kit as usual: `/speckit.plan` and `/speckit.tasks` now include the scope
+gate. If you skip step 3, the gates still run once, inline. The hooks then only print `skipped`.
 
 ## What a failure looks like
 
@@ -107,7 +130,7 @@ From [`examples/missing-story`](examples/missing-story). The plan in this exampl
 
 ```text
 $ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan
-scopeGuard 0.2.0 | gate: plan | feature: specs/001-team-board
+scopeGuard 0.3.0 | gate: plan | feature: specs/001-team-board
 spec scope: 4 user stories, 7 requirements
 
   [FAIL]   US3      Share a board with teammates (P2)
@@ -125,7 +148,7 @@ To fix, account for each missing item in plan.md "## Scope Coverage":
   | FR-004 | System MUST let the board owner invite teammates by e-mail and revo... | covered | <where the plan handles it> | |
 ```
 
-Inside the hook the gate runs with `--iteration N`. It then also prints each open item's spec text
+Inside `/speckit.plan` and `/speckit.tasks` (or the hooks) the gate runs with `--iteration N`. It then also prints each open item's spec text
 under `RESOLVE`, plus the next step (`re-run this gate with --iteration N+1`, or `ESCALATE` with
 the path of the problem report).
 
@@ -134,11 +157,12 @@ the path of the problem report).
 | Command | What it does |
 |---------|--------------|
 | `/speckit.scopeguard.inventory` | Lists every user story and requirement ID in `spec.md` and the scope contract. Prints a ready-made coverage table if the plan has none yet. |
-| `/speckit.scopeguard.plan` | Plan gate: resolves missing items in the plan, escalates after 4 iterations. |
-| `/speckit.scopeguard.tasks` | Tasks gate: adds tasks for missing items, escalates after 4 iterations. |
+| `/speckit.scopeguard.plan` | Plan gate as a separate command: resolves missing items in the plan, escalates after the autocorrect limit. The hook in `integration: hooks`; can also be run by hand. |
+| `/speckit.scopeguard.tasks` | Tasks gate as a separate command: adds tasks for missing items, escalates after the autocorrect limit. |
 | `/speckit.scopeguard.implement` | Implement gate. |
 | `/speckit.scopeguard.report` | Coverage matrix for every item across plan / tasks / implement. Also saved as `scopeguard-report.md` in the feature directory. |
 | `/speckit.scopeguard.compare` | Compares two feature directories, for example two runs of the same spec, item by item. |
+| `/speckit.scopeguard.configure` | Shows and applies the config: inline or hooks, autocorrect, gates. |
 
 With skills-based integrations (such as Claude Code in Spec Kit 1.x) these appear as
 `/speckit-scopeguard-plan` and so on.
@@ -152,10 +176,11 @@ python .specify/extensions/scopeguard/scripts/python/scopeguard.py <command> [op
 ```
 
 Commands: `inventory`, `plan`, `tasks`, `implement`, `check` (every gate whose artifact exists; add
-`--implement` to include that gate), `report`, `compare DIR_A DIR_B`.
+`--implement` to include that gate), `report`, `compare DIR_A DIR_B`, `configure [--dry-run]`.
 Options: `--feature-dir specs/<feature>`, `--all`, `--json`, `--format md`, `--out FILE [--append]`,
 `--save`, `--verbose`, `--report-only`, `--config FILE`, `--iteration N` (resolution loop; exit `3` and
-a problem report once `N` reaches `remediation.max_iterations`).
+a problem report once `N` reaches `autocorrect.max_iterations`), `--via inline|hook` (used by the inline
+steps and the hooks; the call is skipped when the config says the other one runs the gate).
 
 The active feature is found the same way Spec Kit finds it: `SPECIFY_FEATURE_DIRECTORY`, then
 `.specify/feature.json`, then the git branch name, then the only directory under `specs/`.
@@ -190,26 +215,76 @@ Items the plan deferred are waived automatically.
 
 ## Configuration
 
-`specify extension add` creates `.specify/extensions/scopeguard/scopeguard-config.yml`.
-Every key is optional. See [`config-template.yml`](config-template.yml) for the full list. The
-ones you are most likely to change:
+All settings live in one file, `.specify/extensions/scopeguard/scopeguard-config.yml`. It is
+created when you install the extension. Every key is optional; the full list with comments is in
+[`config-template.yml`](config-template.yml). The main switches:
 
 ```yaml
-mode: enforce                      # report = never fail, only measure
-ids:
-  requirement_prefixes: [FR, NFR]  # add SC to trace Success Criteria too
+# Where the gate runs:
+#   inline = mandatory step inside /speckit.plan and /speckit.tasks (default; needs the preset)
+#   hooks  = separate scopeGuard commands triggered by Spec Kit hooks
+integration: inline
+
+autocorrect:
+  enabled: true          # false = the gate only reports what is missing and stops the command
+  max_iterations: 4      # fix-and-recheck iterations before escalating with a problem report
+
+mode: enforce            # report = never stop or fail, only measure (labs, trials)
+
 plan:
-  check_requirements: true         # false = only user stories must be in the plan table
-  require_section: true            # false = fall back to "ID mentioned anywhere in plan.md"
-remediation:
-  max_iterations: 4                # resolve-and-recheck iterations before escalating
-unknown_ids: violation             # IDs in plan/tasks that spec.md does not define
+  enabled: true          # switch a gate off completely
+  check_requirements: true   # false = only user stories must be in the plan table
+tasks:
+  enabled: true
+implement:
+  enabled: true          # the optional after_implement check
+
+ids:
+  requirement_prefixes: [FR, NFR]   # add SC to trace Success Criteria too
+unknown_ids: violation              # IDs in plan/tasks that spec.md does not define
 features:
-  exclude: ["001-*"]               # skip features planned before scopeGuard (for --all)
+  exclude: ["001-*"]                # skip features planned before scopeGuard (for --all)
 ```
 
-Personal overrides go in `scopeguard-config.local.yml` next to it. `SCOPEGUARD_MODE=report`
-switches one run to report mode.
+Most settings take effect on the next run. After changing `integration`, or switching a gate on or
+off, run `configure`. It switches the matching scopeGuard hooks on or off in
+`.specify/extensions.yml`, and prints what is in force:
+
+```text
+$ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
+scopeGuard 0.3.0 | configure
+config: .specify/extensions/scopeguard/scopeguard-config.yml
+
+  integration   : inline
+  autocorrect   : on, max 4 iteration(s), then escalate
+  gates         : plan on, tasks on, implement on
+  mode          : enforce
+
+  /speckit.plan and /speckit.tasks run the scope gate as a mandatory step of their own.
+
+  Hooks in .specify/extensions.yml:
+    before_plan      speckit.scopeguard.inventory     off   (was on)
+    after_plan       speckit.scopeguard.plan          off   (was on)
+    before_tasks     speckit.scopeguard.inventory     off   (was on)
+    after_tasks      speckit.scopeguard.tasks         off   (was on)
+    after_implement  speckit.scopeguard.implement     on
+```
+
+Use `--dry-run` to preview. Inside the agent, `/speckit.scopeguard.configure use hooks` (or
+`6 iterations`, `autocorrect off`) edits the file and applies it in one go.
+
+Two safety nets mean the config is never silently out of sync with the installed commands:
+
+- **The gate runs exactly once.** The inline steps and the hook commands check the config at run
+  time, and the one that is not configured prints `skipped`. This holds even if you forget to run
+  `configure`, or a reinstall turns the hooks back on.
+- **Inline needs the preset.** If you choose `inline` but the scopeguard-templates preset is not
+  installed or is disabled, scopeGuard falls back to the hooks, and `configure` tells you what to
+  install.
+
+Personal overrides go in `local-config.yml` next to the config file. For a single run you can use
+the environment variables `SCOPEGUARD_INTEGRATION`, `SCOPEGUARD_AUTOCORRECT`,
+`SCOPEGUARD_MAX_ITERATIONS` and `SCOPEGUARD_MODE`.
 
 ## CI
 
@@ -218,7 +293,7 @@ writes the report to the job summary:
 
 ```yaml
 - uses: actions/checkout@v5
-- uses: rlgdev/spec-kit-scopeguard@v0.2.0
+- uses: rlgdev/spec-kit-scopeguard@v0.3.0
   with:
     command: check        # check | plan | tasks | implement | report
     features: all         # or specs/001-my-feature

@@ -3,8 +3,8 @@ schema_version: "1.0"
 preset:
   id: "scopeguard-templates"
   name: "scopeGuard Templates"
-  version: "0.2.0"
-  description: "Appends a Scope Coverage table to the plan and tasks templates so every user story and requirement from spec.md is accounted for (pairs with the scopeguard extension)"
+  version: "0.3.0"
+  description: "Makes the scopeGuard scope gate a mandatory step of /speckit.plan and /speckit.tasks and adds Scope Coverage tables to the plan and tasks templates (pairs with the scopeguard extension)"
   author: "rlgdev"
   repository: "https://github.com/rlgdev/spec-kit-scopeguard"
   license: "MIT"
@@ -25,6 +25,18 @@ provides:
       file: "templates/tasks-template.md"
       description: "Adds the Scope Coverage mapping (requirement ID -> task IDs) to tasks.md"
       strategy: "append"
+
+    - type: "command"
+      name: "speckit.plan"
+      file: "commands/speckit.plan.md"
+      description: "Wraps /speckit.plan with the mandatory scopeGuard scope inventory and scope gate (integration: inline)"
+      strategy: "wrap"
+
+    - type: "command"
+      name: "speckit.tasks"
+      file: "commands/speckit.tasks.md"
+      description: "Wraps /speckit.tasks with the mandatory scopeGuard scope inventory and scope gate (integration: inline)"
+      strategy: "wrap"
 
 tags:
   - "scope"

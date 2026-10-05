@@ -20,7 +20,7 @@ Put the complete, deterministic list of scope items (user stories `US1`, `US2`, 
 
 ## Steps
 
-1. Run `{SCRIPT}` from the repository root. If the user input above names a feature directory, append `--feature-dir <that directory>`.
+1. Run `{SCRIPT}` from the repository root. If the user input above names a feature directory, append `--feature-dir <that directory>`. If this command is running as a Spec Kit hook (another command emitted `EXECUTE_COMMAND: speckit.scopeguard.inventory`), also append `--via hook`; if the output then says `skipped`, the inventory runs inline inside `/speckit.plan` and `/speckit.tasks` — say nothing more and continue.
 2. If the script exits with code 2, show its error message and how to fix it (for example `--feature-dir specs/<feature>`), then stop.
 3. Show the inventory to the user as printed (IDs, titles, priorities and any `[plan: ...]` status).
 4. Treat the printed **SCOPE CONTRACT** as binding for the command that is about to run:

@@ -1,26 +1,37 @@
 # scopeGuard configuration
+#
 # Location: .specify/extensions/scopeguard/scopeguard-config.yml
-# Personal overrides (not committed): .specify/extensions/scopeguard/scopeguard-config.local.yml
-# Every key is optional; the values below are the defaults.
+# Personal overrides (not committed): .specify/extensions/scopeguard/local-config.yml
+#
+# After changing `integration` or switching a gate on/off, apply it to Spec Kit's hooks:
+#     /speckit.scopeguard.configure        (or: bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure)
+# Everything else takes effect on the next run. Every key is optional; the values below are the defaults.
 
-# enforce: violations make a gate exit 1 (hooks and CI fail).
-# report:  gates always exit 0 and only report - useful to measure coverage
-#          in a lab or while introducing scopeGuard to an existing project.
-#          Can also be set per run with SCOPEGUARD_MODE=report or --report-only.
+# ── How the gates run ────────────────────────────────────────────────────────
+# inline : the scope gate is a mandatory step INSIDE /speckit.plan and /speckit.tasks
+#          (no separate command). Needs the scopeguard-templates preset; without it
+#          scopeGuard falls back to `hooks` automatically.
+# hooks  : the gate runs as separate scopeGuard commands (/speckit.scopeguard.plan,
+#          /speckit.scopeguard.tasks) triggered by Spec Kit's after_plan / after_tasks hooks.
+integration: inline
+
+# ── Autocorrect ──────────────────────────────────────────────────────────────
+autocorrect:
+  # true : when a gate finds missing user stories or requirements, the agent fixes
+  #        plan.md / tasks.md itself and re-checks.
+  # false: the gate only reports what is missing and stops the command.
+  enabled: true
+  # How many fix-and-recheck iterations the agent gets. If items are still missing
+  # after the last one, the gate stops, writes scopeguard-escalation-<gate>.md into
+  # the feature directory and the agent comes back to you with the problem description.
+  max_iterations: 4
+
+# enforce: violations stop the command / fail CI.
+# report : gates never fail, they only measure (useful for labs and trials).
+#          Also per run: SCOPEGUARD_MODE=report or --report-only.
 mode: enforce
 
-ids:
-  # Regex matched at the start of spec.md heading text (case-insensitive).
-  # Group 1 captures the story number; the scope ID becomes US<n>.
-  story_pattern: '(?:User\s+Story|US)\s*[-#:]?\s*(\d+)\b'
-  # Requirement ID prefixes that are part of the traced scope.
-  # Add SC to also trace Success Criteria (SC-001, ...).
-  requirement_prefixes: [FR, NFR]
-
-spec:
-  # A spec without any user story cannot be traced; treat it as a violation.
-  require_stories: true
-
+# ── Gates ────────────────────────────────────────────────────────────────────
 plan:
   enabled: true
   # Heading (substring match) of the coverage table in plan.md.
@@ -47,15 +58,22 @@ tasks:
   require_reason_for_waiver: true
 
 implement:
+  # The optional after_implement check (every carrying task checked off).
   enabled: true
   check_requirements: true
 
-remediation:
-  # The plan and tasks gates resolve what is missing and re-check. After this many
-  # resolve-and-recheck iterations a still-failing gate stops, writes
-  # scopeguard-escalation-<gate>.md into the feature directory and exits 3
-  # so the agent reports the problem to you instead of looping or guessing.
-  max_iterations: 4
+# ── What counts as scope ─────────────────────────────────────────────────────
+ids:
+  # Regex matched at the start of spec.md heading text (case-insensitive).
+  # Group 1 captures the story number; the scope ID becomes US<n>.
+  story_pattern: '(?:User\s+Story|US)\s*[-#:]?\s*(\d+)\b'
+  # Requirement ID prefixes that are part of the traced scope.
+  # Add SC to also trace Success Criteria (SC-001, ...).
+  requirement_prefixes: [FR, NFR]
+
+spec:
+  # A spec without any user story cannot be traced; treat it as a violation.
+  require_stories: true
 
 # IDs referenced in plan.md / tasks.md that spec.md does not define
 # (renumbered, invented or stale scope): violation | warning | ignore

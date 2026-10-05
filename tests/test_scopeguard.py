@@ -592,3 +592,236 @@ def test_tasks_gate_escalation_report(tmp_path):
     assert code == 3
     report = (fd / "scopeguard-escalation-tasks.md").read_text(encoding="utf-8")
     assert "### US3 - Pay with card (P3)" in report and "`tasks.md`" in report
+
+
+# --------------------------------------------------------------------------- integration / autocorrect / configure
+
+EXTENSIONS_YML = """installed:
+- git
+- scopeguard
+settings:
+  auto_execute_hooks: true
+hooks:
+  before_plan:
+  - extension: git
+    command: speckit.git.commit
+    enabled: true
+    optional: true
+    priority: 10
+    prompt: Commit outstanding changes before planning?
+    description: Auto-commit before implementation planning
+    condition: null
+  - extension: scopeguard
+    command: speckit.scopeguard.inventory
+    enabled: true
+    optional: false
+    priority: 10
+    prompt: Execute speckit.scopeguard.inventory?
+    description: Put the full scope contract (every story and requirement ID) in front
+      of the planner
+    condition: null
+  after_plan:
+  - extension: scopeguard
+    command: speckit.scopeguard.plan
+    optional: false
+    priority: 10
+    condition: null
+  before_tasks:
+  - extension: scopeguard
+    command: speckit.scopeguard.inventory
+    enabled: true
+    optional: false
+  after_tasks:
+  - extension: scopeguard
+    command: speckit.scopeguard.tasks
+    enabled: true
+    optional: false
+  after_implement:
+  - extension: scopeguard
+    command: speckit.scopeguard.implement
+    enabled: true
+    optional: true
+    prompt: Run the scopeGuard implement gate?
+"""
+
+
+def install_inline_preset(root: Path, enabled: bool = True) -> None:
+    commands = root / ".specify" / "presets" / "scopeguard-templates" / "commands"
+    commands.mkdir(parents=True, exist_ok=True)
+    for name in ("speckit.plan.md", "speckit.tasks.md"):
+        (commands / name).write_text("{CORE_TEMPLATE}\n", encoding="utf-8")
+    registry = {"schema_version": "1.0", "presets": {"scopeguard-templates": {"version": "0.3.0", "enabled": enabled}}}
+    (root / ".specify" / "presets" / ".registry").write_text(json.dumps(registry), encoding="utf-8")
+
+
+def write_config(root: Path, text: str) -> None:
+    cfg = root / ".specify" / "extensions" / "scopeguard"
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "scopeguard-config.yml").write_text(text, encoding="utf-8")
+
+
+def test_inline_integration_falls_back_to_hooks_without_preset(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3")]
+    make_feature(tmp_path, plan=plan_with(rows))
+    # default integration is inline, but the preset is missing -> hooks do the work
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "hook")
+    assert proc.returncode == 1 and "falls back" not in proc.stdout
+    assert "preset" in proc.stdout and "run through the hooks instead" in proc.stdout
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "inline")
+    assert proc.returncode == 0 and "skipped" in proc.stdout
+
+
+def test_inline_integration_with_preset_skips_hooks(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3")]
+    make_feature(tmp_path, plan=plan_with(rows))
+    install_inline_preset(tmp_path)
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "hook", "--json")
+    assert proc.returncode == 0 and json.loads(proc.stdout)["verdict"] == "skipped"
+    proc = run_cli(tmp_path, "inventory", "--feature-dir", "specs/001-demo", "--via", "hook")
+    assert proc.returncode == 0 and "skipped" in proc.stdout and "SCOPE CONTRACT" not in proc.stdout
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "inline", "--iteration", "0")
+    assert proc.returncode == 1 and "RESOLVE" in proc.stdout
+    # a disabled preset counts as missing
+    install_inline_preset(tmp_path, enabled=False)
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "inline")
+    assert proc.returncode == 0 and "skipped" in proc.stdout
+
+
+def test_hooks_integration_skips_inline_step(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3")]
+    make_feature(tmp_path, plan=plan_with(rows))
+    install_inline_preset(tmp_path)
+    write_config(tmp_path, "integration: hooks\n")
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "inline")
+    assert proc.returncode == 0 and "integration is 'hooks'" in proc.stdout
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "hook")
+    assert proc.returncode == 1
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "hook", env={"SCOPEGUARD_INTEGRATION": "inline"})
+    assert proc.returncode == 0 and "skipped" in proc.stdout
+
+
+def test_autocorrect_off_reports_and_stops_at_first_check(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3")]
+    fd = make_feature(tmp_path, plan=plan_with(rows))
+    write_config(tmp_path, "autocorrect:\n  enabled: false\n")
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--iteration", "0")
+    assert proc.returncode == 3
+    assert "AUTOCORRECT OFF" in proc.stdout
+    report = (fd / "scopeguard-escalation-plan.md").read_text(encoding="utf-8")
+    assert "autocorrect is off" in report and "TODO(agent)" not in report and "### US3" in report
+    # without --iteration (CI / manual) it is a plain violation
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo")
+    assert proc.returncode == 1
+
+
+def test_autocorrect_max_iterations_from_config(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3")]
+    make_feature(tmp_path, plan=plan_with(rows))
+    write_config(tmp_path, "autocorrect:\n  enabled: true\n  max_iterations: 6\n")
+    code, data = gate(tmp_path, "plan", "--iteration", "4")
+    assert code == 1 and data["gates"][0]["max_iterations"] == 6
+    code, data = gate(tmp_path, "plan", "--iteration", "6")
+    assert code == 3
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--iteration", "1", env={"SCOPEGUARD_MAX_ITERATIONS": "1"})
+    assert proc.returncode == 3
+
+
+@pytest.mark.parametrize("text", [
+    "integration: sidecar\n",
+    "autocorrect:\n  max_iterations: 0\n",
+    "autocorrect:\n  enabled: maybe\n",
+    "autocorrect:\n  max_iterations: lots\n",
+])
+def test_invalid_integration_and_autocorrect_config(tmp_path, text):
+    make_feature(tmp_path, plan=plan_with(FULL_ROWS))
+    write_config(tmp_path, text)
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo")
+    assert proc.returncode == 2 and "config:" in proc.stderr
+
+
+def _hook_states(text: str):
+    states, event, current = {}, None, {}
+    for line in text.splitlines():
+        if line.startswith("  ") and not line.startswith("  -") and line.strip().endswith(":") and not line.startswith("    "):
+            event = line.strip()[:-1]
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            current = {}
+            stripped = stripped[2:]
+        if ":" in stripped:
+            k, _, v = stripped.partition(":")
+            current[k.strip()] = v.strip()
+            if "extension" in current and "command" in current and event:
+                states[(event, current["extension"], current["command"])] = current.get("enabled", "true")
+    return states
+
+
+def test_configure_switches_hooks_for_integration(tmp_path):
+    make_feature(tmp_path)
+    yml = tmp_path / ".specify" / "extensions.yml"
+    yml.write_text(EXTENSIONS_YML, encoding="utf-8")
+    install_inline_preset(tmp_path)
+    write_config(tmp_path, "integration: inline\n")
+
+    proc = run_cli(tmp_path, "configure", "--dry-run")
+    assert proc.returncode == 0 and "would change" in proc.stdout
+    assert yml.read_text(encoding="utf-8") == EXTENSIONS_YML
+
+    proc = run_cli(tmp_path, "configure")
+    assert proc.returncode == 0, proc.stderr
+    text = yml.read_text(encoding="utf-8")
+    try:
+        import yaml  # type: ignore
+        data = yaml.safe_load(text)
+        hooks = {(e, h["command"]): h.get("enabled", True) for e, hs in data["hooks"].items() for h in hs}
+        assert hooks[("before_plan", "speckit.git.commit")] is True
+        assert hooks[("before_plan", "speckit.scopeguard.inventory")] is False
+        assert hooks[("after_plan", "speckit.scopeguard.plan")] is False
+        assert hooks[("after_tasks", "speckit.scopeguard.tasks")] is False
+        assert hooks[("after_implement", "speckit.scopeguard.implement")] is True
+    except ImportError:
+        pass
+    states = _hook_states(text)
+    assert states[("after_plan", "scopeguard", "speckit.scopeguard.plan")] == "false"
+    assert states[("before_plan", "git", "speckit.git.commit")] == "true"
+    assert "of the planner" in text  # multi-line values untouched
+
+    proc = run_cli(tmp_path, "configure", "--json")
+    assert json.loads(proc.stdout)["changed"] == 0  # idempotent
+
+    write_config(tmp_path, "integration: hooks\nimplement:\n  enabled: false\n")
+    proc = run_cli(tmp_path, "configure", "--json")
+    data = json.loads(proc.stdout)
+    assert data["effective_integration"] == "hooks"
+    states = _hook_states(yml.read_text(encoding="utf-8"))
+    assert states[("after_plan", "scopeguard", "speckit.scopeguard.plan")] == "true"
+    assert states[("after_implement", "scopeguard", "speckit.scopeguard.implement")] == "false"
+
+
+def test_configure_keeps_hooks_on_when_inline_preset_missing(tmp_path):
+    make_feature(tmp_path)
+    yml = tmp_path / ".specify" / "extensions.yml"
+    yml.write_text(EXTENSIONS_YML, encoding="utf-8")
+    proc = run_cli(tmp_path, "configure")
+    assert proc.returncode == 0
+    assert "NOTE" in proc.stdout and "specify preset add" in proc.stdout
+    states = _hook_states(yml.read_text(encoding="utf-8"))
+    assert states[("after_plan", "scopeguard", "speckit.scopeguard.plan")] == "true"
+
+
+def test_configure_without_extension_registry_is_error(tmp_path):
+    make_feature(tmp_path)
+    proc = run_cli(tmp_path, "configure")
+    assert proc.returncode == 2 and "extensions.yml" in proc.stderr
+
+
+def test_preset_wraps_core_commands_with_inline_steps():
+    manifest = (REPO / "preset" / "preset.yml").read_text(encoding="utf-8")
+    for name in ("speckit.plan", "speckit.tasks"):
+        assert f'name: "{name}"' in manifest
+        body = (REPO / "preset" / "commands" / f"{name}.md").read_text(encoding="utf-8")
+        gate = name.split(".")[1]
+        assert "strategy: wrap" in body and body.count("{CORE_TEMPLATE}") == 1
+        assert f"{gate} --via inline --iteration N --feature-dir <FEATURE_DIR>" in body
+        assert "inventory --via inline" in body and "AUTOCORRECT OFF" in body and "TODO(agent)" in body
+        assert "scripts/" not in body.replace(".specify/extensions/scopeguard/scripts/", "")
