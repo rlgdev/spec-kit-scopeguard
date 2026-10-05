@@ -243,9 +243,10 @@ python -m pytest -q          # engine tests
 python tools/build.py        # dist/scopeguard.zip, dist/scopeguard-preset.zip, dist/SHA256SUMS
 ```
 
-To release, bump the version in `extension.yml`, `preset/preset.yml` and
-`scripts/python/scopeguard.py`, add a CHANGELOG entry, and push a `vX.Y.Z` tag. The release
-workflow builds the archives and attaches them to the GitHub release.
+To release, bump the version in `extension.yml`, `preset/preset.yml`,
+`scripts/python/scopeguard.py` and `catalog/*.json`, add a CHANGELOG entry, then push a `vX.Y.Z`
+tag or publish a release with that tag in the GitHub UI. The release workflow builds the
+archives and attaches them to the release.
 
 ## License
 
