@@ -21,7 +21,7 @@ Make sure the task list carries the whole in-scope part of `spec.md`, and **fix 
 - a user story by tasks labelled `[USn]` (or listed under a `User Story n` phase heading);
 - a requirement by naming its ID in a task description (for example `(FR-003)`), or by a row in the `## Scope Coverage` table of `tasks.md` that maps it to existing task IDs.
 
-This command runs automatically as the mandatory `after_tasks` hook and can also be run by hand. The script decides, you resolve. Exit codes: **0** pass, **1** resolve, **3** escalate, **2** setup error.
+This command is the `after_tasks` hook when `integration: hooks` is configured; with the default `integration: inline` (with the scopeguard-templates preset) the same gate runs inside `/speckit.tasks` and this command prints `skipped`. It can also be run by hand. The script decides, you resolve. Exit codes: **0** pass, **1** resolve, **3** escalate, **2** setup error.
 
 ## Procedure
 

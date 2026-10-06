@@ -11,8 +11,9 @@
 # inline : the scope gate is a mandatory step INSIDE /speckit.plan and /speckit.tasks
 #          (no separate command). Needs the scopeguard-templates preset; without it
 #          scopeGuard falls back to `hooks` automatically.
-# hooks  : the gate runs as separate scopeGuard commands (/speckit.scopeguard.plan,
-#          /speckit.scopeguard.tasks) triggered by Spec Kit's after_plan / after_tasks hooks.
+# hooks  : the gates run as separate scopeGuard commands (/speckit.scopeguard.inventory,
+#          /speckit.scopeguard.plan, /speckit.scopeguard.tasks) triggered by Spec Kit's
+#          before_plan / after_plan / before_tasks / after_tasks hooks.
 # embedded: no hooks and no inline steps. The gates run only when another tool calls
 #          scopeGuard's command line, for example archiGuard's gate runner, which then owns
 #          the iteration budget. Do not install the scopeguard-templates preset with it.

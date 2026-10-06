@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scopeGuard launcher (bash). Finds a Python 3.8+ interpreter and runs the
+# scopeGuard launcher (bash). Finds a Python 3.9+ interpreter and runs the
 # deterministic engine in ../python/scopeguard.py with all arguments.
 #
 # Interpreter search order:
@@ -20,14 +20,14 @@ fi
 _works() {
     # the marker check also rejects the Windows Store "python3" alias stub, which prints an install hint
     local out
-    out="$("$@" -c 'import sys; print("scopeguard-python-ok" if sys.version_info >= (3, 8) else "too-old")' 2>/dev/null)" || return 1
+    out="$("$@" -c 'import sys; print("scopeguard-python-ok" if sys.version_info >= (3, 9) else "too-old")' 2>/dev/null)" || return 1
     [[ "$out" == *scopeguard-python-ok* ]]
 }
 
 PY=()
 if [[ -n "${SCOPEGUARD_PYTHON:-}" ]]; then
     if ! _works "$SCOPEGUARD_PYTHON"; then
-        echo "scopeGuard: ERROR: SCOPEGUARD_PYTHON='$SCOPEGUARD_PYTHON' is not a working Python 3.8+ interpreter." >&2
+        echo "scopeGuard: ERROR: SCOPEGUARD_PYTHON='$SCOPEGUARD_PYTHON' is not a working Python 3.9+ interpreter." >&2
         exit 2
     fi
     PY=("$SCOPEGUARD_PYTHON")
@@ -53,7 +53,7 @@ else
 fi
 
 if [[ ${#PY[@]} -eq 0 ]]; then
-    echo "scopeGuard: ERROR: no Python 3.8+ interpreter found. Install Python or uv, or set SCOPEGUARD_PYTHON." >&2
+    echo "scopeGuard: ERROR: no Python 3.9+ interpreter found. Install Python or uv, or set SCOPEGUARD_PYTHON." >&2
     exit 2
 fi
 

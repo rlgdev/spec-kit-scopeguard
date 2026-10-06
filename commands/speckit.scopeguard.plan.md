@@ -16,7 +16,7 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Goal
 
-Make sure the implementation plan covers the whole scope of `spec.md`, and **fix the plan when it does not**. Every user story (`US1`, `US2`, ...) and every traced requirement (`FR-###`, `NFR-###`) must be planned and listed in the `## Scope Coverage` table of `plan.md`: `covered` (with where the plan handles it) or `deferred` (with a reason that comes from `spec.md` or the user). This command runs automatically as the mandatory `after_plan` hook and can also be run by hand.
+Make sure the implementation plan covers the whole scope of `spec.md`, and **fix the plan when it does not**. Every user story (`US1`, `US2`, ...) and every traced requirement (`FR-###`, `NFR-###`) must be planned and listed in the `## Scope Coverage` table of `plan.md`: `covered` (with where the plan handles it) or `deferred` (with a reason that comes from `spec.md` or the user). This command is the `after_plan` hook when `integration: hooks` is configured; with the default `integration: inline` (with the scopeguard-templates preset) the same gate runs inside `/speckit.plan` and this command prints `skipped`. It can also be run by hand.
 
 The script decides, you resolve. Never re-interpret its verdict. Exit codes: **0** pass, **1** resolve, **3** escalate, **2** setup error.
 

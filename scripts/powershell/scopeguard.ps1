@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# scopeGuard launcher (PowerShell). Finds a Python 3.8+ interpreter and runs the
+# scopeGuard launcher (PowerShell). Finds a Python 3.9+ interpreter and runs the
 # deterministic engine in ../python/scopeguard.py with all arguments.
 #
 # Interpreter search order:
@@ -22,7 +22,7 @@ function Test-Python {
     param([string]$Exe, [string[]]$Prefix = @())
     try {
         # the marker check also rejects the Windows Store alias stub, which prints an install hint
-        $out = & $Exe @Prefix -c 'import sys; print(''scopeguard-python-ok'' if sys.version_info >= (3, 8) else ''too-old'')' 2>$null
+        $out = & $Exe @Prefix -c 'import sys; print(''scopeguard-python-ok'' if sys.version_info >= (3, 9) else ''too-old'')' 2>$null
         return (($LASTEXITCODE -eq 0) -and ("$out" -match 'scopeguard-python-ok'))
     } catch {
         return $false
@@ -34,7 +34,7 @@ $prefix = @()
 
 if ($env:SCOPEGUARD_PYTHON) {
     if (-not (Test-Python -Exe $env:SCOPEGUARD_PYTHON)) {
-        [Console]::Error.WriteLine("scopeGuard: ERROR: SCOPEGUARD_PYTHON='$($env:SCOPEGUARD_PYTHON)' is not a working Python 3.8+ interpreter.")
+        [Console]::Error.WriteLine("scopeGuard: ERROR: SCOPEGUARD_PYTHON='$($env:SCOPEGUARD_PYTHON)' is not a working Python 3.9+ interpreter.")
         exit 2
     }
     $exe = $env:SCOPEGUARD_PYTHON
@@ -64,7 +64,7 @@ if ($env:SCOPEGUARD_PYTHON) {
 }
 
 if (-not $exe) {
-    [Console]::Error.WriteLine('scopeGuard: ERROR: no Python 3.8+ interpreter found. Install Python or uv, or set SCOPEGUARD_PYTHON.')
+    [Console]::Error.WriteLine('scopeGuard: ERROR: no Python 3.9+ interpreter found. Install Python or uv, or set SCOPEGUARD_PYTHON.')
     exit 2
 }
 

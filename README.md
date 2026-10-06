@@ -48,7 +48,8 @@ With `integration: hooks` the same gates run as separate scopeGuard commands
 
 Each item gets a verdict: **pass**, **violation** or **waived** (deferred with a reason, always shown).
 Exit codes: `0` pass, `1` violations to resolve, `2` setup error, `3` escalated (still failing
-after the last allowed iteration).
+after the last allowed iteration, or the first failing check with `autocorrect.enabled: false`; only
+inside the resolution loop, with `--iteration`).
 
 ### Resolve, re-check, escalate
 
@@ -79,7 +80,7 @@ constitution, along with the problem report an agent produced for it.
 ## Install
 
 Requires Spec Kit (`specify-cli`) 0.12.17 or newer. The checker is a single Python file
-(standard library only, Python 3.8+). If `python` is not on `PATH`, the launchers use the
+(standard library only, Python 3.9+). If `python` is not on `PATH`, the launchers use the
 Python that ships with `specify-cli`, or `uv`.
 
 From your Spec Kit project root:
@@ -251,7 +252,8 @@ features:
   exclude: ["001-*"]                # skip features planned before scopeGuard (for --all)
 ```
 
-Most settings take effect on the next run. After changing `integration`, or switching a gate on or
+Most settings take effect on the next run. A key scopeGuard does not know (a typo, a setting of another
+version) is an error: the gate exits `2` and names the key. After changing `integration`, or switching a gate on or
 off, run `configure`. It switches the matching scopeGuard hooks on or off in
 `.specify/extensions.yml`, and prints what is in force:
 

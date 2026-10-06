@@ -6,10 +6,27 @@ All notable changes to scopeGuard are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Python 3.9 is now the stated minimum everywhere (README, `extension.yml`, launchers, engine docstring) and the
+  engine refuses older interpreters like the siblings; CI never tested 3.8 and CONTRIBUTING already said 3.9.
+
 ### Fixed
 
 - The bash and PowerShell launchers reject the Windows Store `python3` alias stub (it prints an install hint and
   exits 0) with the same marker check auditGuard and Guardians use; the header comment already promised it.
+- Unknown keys in `scopeguard-config.yml` / `local-config.yml` (top level and inside a section) and a section
+  that is not a mapping are now a config error (exit 2) that names the key, instead of silently falling back
+  to the default (or, for `plan: false`, a traceback) - as in archiGuard, auditGuard and Guardians.
+- `workflows/scopeguard-sdd/workflow.yml` declares `requires.speckit_version: ">=0.12.17"`, the same floor as the
+  extension and the preset (it said `>=0.8.5` since 0.1.0).
+- The `inventory`, `plan` and `tasks` command files no longer say the command "runs automatically" as a mandatory
+  hook: with the default `integration: inline` those hooks are off and the step runs inside `/speckit.plan` and
+  `/speckit.tasks` (wording as in archiGuard's command files).
+- `config-template.yml`: the `integration: hooks` comment names all four hooks the mode switches on
+  (`before_plan` / `before_tasks` run `/speckit.scopeguard.inventory`, `after_plan` / `after_tasks` run the
+  plan and tasks gates), as the README and `configure` already did. The README states that exit `3` also ends
+  the resolution loop at the first failing check when autocorrect is off.
 
 ### Added
 

@@ -520,6 +520,20 @@ def test_bad_config_is_exit_2(tmp_path):
     assert code == 2 and data["verdict"] == "error"
 
 
+@pytest.mark.parametrize("text", ["bogus_key: 1\n", "autocorrect:\n  max_iteration: 1\n", "plan:\n  check_requirments: false\n", "plan: false\n"])
+def test_unknown_config_key_is_exit_2(tmp_path, text):
+    make_feature(tmp_path, plan=plan_with(FULL_ROWS))
+    cfg = tmp_path / "cfg.yml"
+    cfg.write_text(text, encoding="utf-8")
+    code, data = gate(tmp_path, "plan", "--config", str(cfg))
+    assert code == 2 and data["verdict"] == "error" and "config:" in data["error"]
+
+
+def test_python_engine_refuses_old_python():
+    text = ENGINE.read_text(encoding="utf-8")
+    assert "sys.version_info < (3, 9)" in text
+
+
 # --------------------------------------------------------------------------- resolution loop
 
 

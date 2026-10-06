@@ -16,7 +16,7 @@ Anything missing is a *violation* and the gate exits 1. Deferred items are
 *waived* (visible, never silent). The verdict vocabulary is pass / violation /
 waived.
 
-Standard library only; Python 3.8+. PyYAML is used for the config file when
+Standard library only; Python 3.9+. PyYAML is used for the config file when
 available, otherwise a small built-in YAML-subset reader is used.
 
 Exit codes: 0 = pass, 1 = violations found (resolve them), 2 = usage or setup error,
@@ -36,6 +36,10 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+
+if sys.version_info < (3, 9):
+    sys.stderr.write("scopeGuard: ERROR: Python 3.9 or newer is required\n")
+    sys.exit(2)
 
 __version__ = "0.4.0"
 
@@ -313,6 +317,23 @@ def load_config(root: Path, explicit: Optional[str]) -> Tuple[Dict[str, Any], Li
         user = _deep_merge(user, _load_yaml_file(p))
         sources.append(str(p))
     config = _deep_merge(config, user)
+
+    # Unknown keys are errors (a misspelt key must not silently fall back to the default).
+    allowed_top = set(DEFAULT_CONFIG) | {"remediation"}  # remediation: the v0.2 name, read below
+    unknown = sorted(str(k) for k in set(user) - allowed_top)
+    if unknown:
+        raise ScopeGuardError(
+            f"config: unknown setting(s) {', '.join(unknown)} - see config-template.yml for the settings scopeGuard reads"
+        )
+    for section in ("autocorrect", "ids", "spec", "plan", "tasks", "implement", "features"):
+        value = user.get(section)
+        if value is None:
+            continue
+        if not isinstance(value, dict):
+            raise ScopeGuardError(f"config: {section} must be a mapping")
+        bad = sorted(str(k) for k in set(value) - set(DEFAULT_CONFIG[section]))
+        if bad:
+            raise ScopeGuardError(f"config: {section}: unknown setting(s) {', '.join(bad)}")
 
     # v0.2 name for the iteration limit
     legacy = (user.get("remediation") or {}) if isinstance(user.get("remediation"), dict) else {}

@@ -18,7 +18,7 @@ requires:
   speckit_version: ">=0.12.17"
   tools:
     - name: python
-      version: ">=3.8"
+      version: ">=3.9"
       required: false
       description: "Runs the deterministic checker (standard library only). Without python on PATH the launchers use the Python bundled with specify-cli, or uv."
 

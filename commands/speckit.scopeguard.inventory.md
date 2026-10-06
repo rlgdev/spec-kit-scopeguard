@@ -16,7 +16,7 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Goal
 
-Put the complete, deterministic list of scope items (user stories `US1`, `US2`, ... and requirement IDs such as `FR-001`) in front of whoever writes the next artifact, so nothing is dropped by accident. This command runs automatically as a mandatory `before_plan` and `before_tasks` hook; it can also be run by hand at any time. It only reads files.
+Put the complete, deterministic list of scope items (user stories `US1`, `US2`, ... and requirement IDs such as `FR-001`) in front of whoever writes the next artifact, so nothing is dropped by accident. This command is the `before_plan` and `before_tasks` hook when `integration: hooks` is configured; with the default `integration: inline` (with the scopeguard-templates preset) the same inventory runs inside `/speckit.plan` and `/speckit.tasks` and this command prints `skipped`. It can also be run by hand at any time. It only reads files.
 
 ## Steps
 
