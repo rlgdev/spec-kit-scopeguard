@@ -6,10 +6,28 @@ All notable changes to scopeGuard are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `pytest.ini` (tests under `tests/`, no cache directory) as in the siblings.
+- `tools/build.py --check` (CI): versions equal, the files the manifests name exist, the catalog `provides` counts
+  match the manifests. The CI `lint` job runs it with pyflakes and shellcheck, like the siblings.
+- Repository governance for corporate use: `CODEOWNERS`, `SECURITY.md` (private vulnerability reporting),
+  `CONTRIBUTING.md` (the family's conventions and release steps), Dependabot for the GitHub Actions.
+- The README points to the Guardians bundle and its getting-started guide.
+- GitHub Action: `engine` input (`installed` = the scopeGuard the project installed under `.specify/extensions/scopeguard`,
+  falling back to the action's own copy, default; `action` = the action's own copy), like the archiGuard and auditGuard actions.
+- `tools/e2e-speckit.sh`: the Spec Kit end-to-end check (install from the built archives, rendered skills, configure, the
+  example feature through the gate) as a script runnable locally, as in the siblings; CI runs and shellchecks it. It falls
+  back to `specify init` without `--non-interactive` for Spec Kit 0.12.17.
+- CI runs the tests once more with PyYAML installed (ubuntu, Python 3.13), as archiGuard does: the engine prefers
+  PyYAML when importable and the `configure` test checks the rewritten `extensions.yml` with it.
+- The preset declares `requires.extensions: scopeguard >=0.4.0`: Spec Kit 1.0.4 or newer warns after `specify preset add`
+  when the extension is missing (the wrapped steps do nothing without it); older Spec Kit versions ignore the key.
+
 ### Changed
 
 - Python 3.9 is now the stated minimum everywhere (README, `extension.yml`, launchers, engine docstring) and the
-  engine refuses older interpreters like the siblings; CI never tested 3.8 and CONTRIBUTING already said 3.9.
+  engine refuses older interpreters like the siblings; CI never tested 3.8.
 - The `scopeguard-sdd` workflow carries the extension's version (0.4.0; it had stayed at 0.1.0) and
   `tools/build.py --check` keeps the two equal, as in archiGuard.
 
@@ -29,26 +47,9 @@ All notable changes to scopeGuard are documented here. The format follows
   `/speckit.tasks` (wording as in archiGuard's command files).
 - `config-template.yml`: the `integration: hooks` comment names all four hooks the mode switches on
   (`before_plan` / `before_tasks` run `/speckit.scopeguard.inventory`, `after_plan` / `after_tasks` run the
-  plan and tasks gates), as the README and `configure` already did. The README states that exit `3` also ends
-  the resolution loop at the first failing check when autocorrect is off.
-
-### Added
-
-- `pytest.ini` (tests under `tests/`, no cache directory) as in the siblings.
-- `tools/build.py --check` (CI): versions equal, the files the manifests name exist, the catalog `provides` counts
-  match the manifests. The CI `lint` job runs it with pyflakes and shellcheck, like the siblings.
-- Repository governance for corporate use: `CODEOWNERS`, `SECURITY.md` (private vulnerability reporting),
-  `CONTRIBUTING.md` (the family's conventions and release steps), Dependabot for the GitHub Actions.
-- The README points to the Guardians bundle and its getting-started guide.
-- GitHub Action: `engine` input (`installed` = the scopeGuard the project installed under `.specify/extensions/scopeguard`,
-  falling back to the action's own copy, default; `action` = the action's own copy), like the archiGuard and auditGuard actions.
-- `tools/e2e-speckit.sh`: the Spec Kit end-to-end check (install from the built archives, rendered skills, configure, the
-  example feature through the gate) as a script runnable locally, as in the siblings; CI runs and shellchecks it. It falls
-  back to `specify init` without `--non-interactive` for Spec Kit 0.12.17.
-- CI runs the tests once more with PyYAML installed (ubuntu, Python 3.13), as archiGuard does: the engine prefers
-  PyYAML when importable and the `configure` test checks the rewritten `extensions.yml` with it.
-- The preset declares `requires.extensions: scopeguard >=0.4.0`: Spec Kit >=1.1.1 warns after `specify preset add`
-  when the extension is missing (the wrapped steps do nothing without it); older Spec Kit versions ignore the key.
+  plan and tasks gates), as the README and `configure` already did.
+- README: exit `3` is also the result of the first failing check when `autocorrect.enabled: false` (inside the
+  resolution loop, with `--iteration`), as the engine has done since 0.3.0.
 
 ## [0.4.0] - 2026-10-06
 

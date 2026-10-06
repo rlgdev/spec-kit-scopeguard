@@ -322,8 +322,9 @@ writes the report to the job summary:
     implement: "false"    # "true" = also require all carrying tasks to be done
 ```
 
-The action uses the scopeGuard installed in the project (`engine: installed`), so CI runs the same
-version as the developers; `engine: action` uses the action's own copy.
+By default (`engine: installed`) the action runs the scopeGuard the project installed under
+`.specify/extensions/scopeguard`, so CI runs the same version as the developers, and falls back to its
+own copy when the project has none; `engine: action` always uses the action's own copy.
 
 On other CI systems: `python .specify/extensions/scopeguard/scripts/python/scopeguard.py check --all`.
 
