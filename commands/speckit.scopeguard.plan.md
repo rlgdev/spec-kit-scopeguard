@@ -20,7 +20,7 @@ Make sure the implementation plan covers the whole scope of `spec.md`, and **fix
 
 The script decides, you resolve. Never re-interpret its verdict. Exit codes: **0** pass, **1** resolve, **3** escalate, **2** setup error.
 
-## Procedure
+## Steps
 
 Start with `N = 0`.
 

@@ -26,6 +26,10 @@ inputs:
     description: "Write a Markdown report to the job summary"
     required: false
     default: "true"
+  engine:
+    description: "'installed' = the scopeGuard the project installed (.specify/extensions/scopeguard), falling back to this action's; 'action' = this action's"
+    required: false
+    default: "installed"
   args:
     description: "Extra arguments passed to scopeguard (e.g. --report-only or --config path)"
     required: false
@@ -43,7 +47,8 @@ runs:
         SG_IMPLEMENT: ${{ inputs.implement }}
         SG_SUMMARY: ${{ inputs.summary }}
         SG_ARGS: ${{ inputs.args }}
-        SG_ENGINE: ${{ github.action_path }}/scripts/python/scopeguard.py
+        SG_ENGINE: ${{ inputs.engine }}
+        SG_ACTION_ENGINE: ${{ github.action_path }}/scripts/python/scopeguard.py
       run: |
         set -euo pipefail
         case "$SG_COMMAND" in
@@ -52,7 +57,11 @@ runs:
         esac
         PY=python3
         command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1 || PY=python
-        cmd=("$PY" "$SG_ENGINE" "$SG_COMMAND")
+        engine="$SG_ACTION_ENGINE"
+        if [ "$SG_ENGINE" = "installed" ] && [ -f .specify/extensions/scopeguard/scripts/python/scopeguard.py ]; then
+          engine=.specify/extensions/scopeguard/scripts/python/scopeguard.py
+        fi
+        cmd=("$PY" "$engine" "$SG_COMMAND")
         if [ "$SG_FEATURES" = "all" ]; then cmd+=(--all); else cmd+=(--feature-dir "$SG_FEATURES"); fi
         if [ "$SG_IMPLEMENT" = "true" ] && [ "$SG_COMMAND" = "check" ]; then cmd+=(--implement); fi
         if [ "$SG_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cmd+=(--out "$GITHUB_STEP_SUMMARY" --append); fi

@@ -41,7 +41,7 @@ ready when all of it is green.
 
 ## Releasing
 
-1. Bump the version in `extension.yml`, `preset/preset.yml`, `scripts/python/scopeguard.py` and `catalog/*.json` (`tools/build.py --check` fails while they disagree).
+1. Bump the version in `extension.yml`, `preset/preset.yml`, `workflows/scopeguard-sdd/workflow.yml`, `scripts/python/scopeguard.py` and `catalog/*.json` (`tools/build.py --check` fails while they disagree).
 2. Move the `[Unreleased]` entries of `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`; the release workflow
    uses that section as the release notes.
 3. Update the `releases/download/vX.Y.Z/...` URLs in the README and `preset/README.md`.

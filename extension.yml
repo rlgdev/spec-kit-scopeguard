@@ -16,6 +16,9 @@ requires:
   # 0.12.17 is the first release that rewrites extension-local "scripts/..."
   # paths in command frontmatter to .specify/extensions/<id>/scripts/.
   speckit_version: ">=0.12.17"
+  # informational: as of Spec Kit 1.1.1 the CLI reads only requires.speckit_version from this manifest (extension add,
+  # compatibility and `extension info` of a local install ignore `tools`; info lists tools only from a catalog entry).
+  # The launchers find python themselves.
   tools:
     - name: python
       version: ">=3.9"

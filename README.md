@@ -99,7 +99,7 @@ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
 #    or, inside your agent: /speckit.scopeguard.configure
 ```
 
-Spec Kit asks you to confirm installs from a URL; answer `y`. Use `releases/latest/download/...`
+Spec Kit asks you to confirm the extension install from a URL (step 1); answer `y`. The preset install (step 2) does not ask. Use `releases/latest/download/...`
 instead of `releases/download/v0.4.0/...` to always get the newest release.
 
 <details>
@@ -322,6 +322,9 @@ writes the report to the job summary:
     implement: "false"    # "true" = also require all carrying tasks to be done
 ```
 
+The action uses the scopeGuard installed in the project (`engine: installed`), so CI runs the same
+version as the developers; `engine: action` uses the action's own copy.
+
 On other CI systems: `python .specify/extensions/scopeguard/scripts/python/scopeguard.py check --all`.
 
 ## Hard stops with the workflow engine
@@ -374,12 +377,13 @@ specify preset remove scopeguard-templates
 ## Development
 
 ```bash
-python -m pytest -q          # engine tests
+python -m pytest -q            # engine tests
 python tools/build.py --check  # versions, manifests and catalogs agree (CI)
-python tools/build.py        # dist/scopeguard.zip, dist/scopeguard-preset.zip, dist/SHA256SUMS
+python tools/build.py          # dist/scopeguard.zip, dist/scopeguard-preset.zip, dist/SHA256SUMS
+bash tools/e2e-speckit.sh      # install into a fresh Spec Kit project and drive it (needs `specify`)
 ```
 
-To release, bump the version in `extension.yml`, `preset/preset.yml`,
+To release, bump the version in `extension.yml`, `preset/preset.yml`, the workflow,
 `scripts/python/scopeguard.py` and `catalog/*.json`, add a CHANGELOG entry, then push a `vX.Y.Z`
 tag or publish a release with that tag in the GitHub UI. The release workflow builds the
 archives and attaches them to the release.

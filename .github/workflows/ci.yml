@@ -11,19 +11,26 @@ permissions:
 
 jobs:
   test:
-    name: tests (${{ matrix.os }}, py${{ matrix.python }})
+    name: tests (${{ matrix.os }}, py${{ matrix.python }}, ${{ matrix.yaml }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ["3.9", "3.13"]
+        yaml: [builtin]
+        include:
+          - os: ubuntu-latest
+            python: "3.13"
+            yaml: pyyaml       # the engine prefers PyYAML when importable; the configure test's PyYAML assertions need it
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install pytest
+      - if: matrix.yaml == 'pyyaml'
+        run: python -m pip install pyyaml
       - name: pytest
         shell: bash
         run: python -m pytest -q -rs --junitxml=pytest-report.xml
@@ -50,7 +57,7 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install pyflakes
       - run: python -m pyflakes scripts/python tools tests
-      - run: shellcheck scripts/bash/scopeguard.sh
+      - run: shellcheck scripts/bash/scopeguard.sh tools/e2e-speckit.sh
       - run: python tools/build.py --check
 
   launchers:
@@ -97,55 +104,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install "${{ matrix.speckit }}"
-      - name: build release archives
-        run: python3 tools/build.py
-      - name: install extension + preset from the built archives
-        run: |
-          set -euo pipefail
-          (cd dist && python3 -m http.server 8765 >/dev/null 2>&1 &)
-          sleep 2
-          cd "$RUNNER_TEMP"
-          specify init lab --integration claude --script sh --ignore-agent-tools --non-interactive \
-            || specify init lab --integration claude --script sh --ignore-agent-tools
-          cd lab
-          printf 'y\ny\n' | specify extension add scopeguard --from http://localhost:8765/scopeguard.zip
-          specify preset add --from http://localhost:8765/scopeguard-preset.zip
-          specify extension list | grep -i scopeguard
-          grep -q "speckit.scopeguard.plan" .specify/extensions.yml
-          grep -rq "bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan --iteration N" .claude
-          # inline integration: the preset wraps /speckit.plan and /speckit.tasks
-          grep -q "scopeGuard (B): scope gate" .claude/skills/speckit-plan/SKILL.md
-          grep -q "scopeGuard (B): scope gate" .claude/skills/speckit-tasks/SKILL.md
-          grep -q "setup-plan.sh --json" .claude/skills/speckit-plan/SKILL.md
-          SG="bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh"
-          $SG configure
-          python3 - <<'PY'
-          import re
-          text = open(".specify/extensions.yml").read()
-          block = text[text.index("command: speckit.scopeguard.plan"):]
-          assert re.search(r"enabled:\s*false", block.split("- extension")[0]), "after_plan hook not switched off"
-          PY
-          SCOPEGUARD_INTEGRATION=hooks $SG configure --json | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['effective_integration']=='hooks' and d['changed']==4, d"
-          $SG configure
-          # the preset appends the Scope Coverage table to the composed plan template
-          git init -q
-          bash .specify/scripts/bash/create-new-feature.sh --json --short-name team-board "Team board"
-          fd=$(ls -d specs/*/ | head -1)
-          cp "$GITHUB_WORKSPACE/examples/missing-story/specs/001-team-board/spec.md" "$fd/spec.md"
-          SPECIFY_FEATURE_DIRECTORY="$fd" bash .specify/scripts/bash/setup-plan.sh --json
-          grep -q "## Scope Coverage" "$fd/plan.md"
-          # the empty plan fails the gate (every item missing) ...
-          set +e
-          bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan --feature-dir "$fd"; code=$?
-          set -e
-          test "$code" -eq 1
-          # ... and the example plan that dropped US3 fails it too
-          cp "$GITHUB_WORKSPACE/examples/missing-story/specs/001-team-board/plan.md" "$fd/plan.md"
-          set +e
-          bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan --feature-dir "$fd" --json > gate.json; code=$?
-          set -e
-          test "$code" -eq 1
-          python3 -c "import json; d=json.load(open('gate.json')); bad={i['id'] for i in d['gates'][0]['items'] if i['verdict']=='violation'}; assert 'US3' in bad, bad"
+      - name: scopeGuard + preset in a fresh Spec Kit project
+        run: bash tools/e2e-speckit.sh
 
   action:
     name: GitHub Action self-test

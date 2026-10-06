@@ -11,6 +11,9 @@ preset:
 
 requires:
   speckit_version: ">=0.12.17"
+  extensions:
+    - id: scopeguard
+      version: ">=0.4.0"
 
 provides:
   templates:

@@ -5,7 +5,7 @@
     python tools/build.py --check    # fail when a version disagrees, a referenced file is missing or a catalog count is off (CI)
     python tools/build.py --check-tag v0.1.0
 
-What must agree: extension.yml, preset/preset.yml, scripts/python/scopeguard.py (__version__),
+What must agree: extension.yml, preset/preset.yml, workflows/scopeguard-sdd/workflow.yml, scripts/python/scopeguard.py (__version__),
 catalog/extensions.json and catalog/presets.json. Both archives have their manifest (extension.yml /
 preset.yml) at the archive root, as `specify extension add --from` and `specify preset add --from`
 expect. Archives are reproducible: fixed timestamps, sorted entries, normalized modes.
@@ -29,6 +29,7 @@ FIXED_DATE = (2026, 1, 1, 0, 0, 0)
 EXTENSION_FILES = ["extension.yml", "config-template.yml", "README.md", "LICENSE", "CHANGELOG.md"]
 EXTENSION_DIRS = ["commands", "scripts"]
 PRESET_ROOT = ROOT / "preset"
+WORKFLOW = ROOT / "workflows" / "scopeguard-sdd" / "workflow.yml"
 
 
 def version_of(path: Path, pattern: str) -> str:
@@ -44,6 +45,7 @@ def versions() -> dict:
         "extension.yml": version_of(ROOT / "extension.yml", yml),
         "preset/preset.yml": version_of(PRESET_ROOT / "preset.yml", yml),
         "scopeguard.py": version_of(ROOT / "scripts" / "python" / "scopeguard.py", r'^__version__\s*=\s*"([^"]+)"'),
+        "workflow.yml": version_of(WORKFLOW, yml),
     }
     for name in ("extensions.json", "presets.json"):
         data = json.loads((ROOT / "catalog" / name).read_text(encoding="utf-8"))
@@ -60,6 +62,12 @@ def manifest_problems() -> List[str]:
     for command in commands:
         if not (ROOT / command).is_file():
             problems.append(f"extension.yml names a command file that does not exist: {command}")
+    for template in re.findall(r'template:\s*"?([^"\s]+)"?', manifest):
+        if not (ROOT / template).is_file():
+            problems.append(f"extension.yml names a config template that does not exist: {template}")
+    for name in EXTENSION_FILES:
+        if not (ROOT / name).is_file():
+            problems.append(f"release file missing: {name}")
     hooks = len(re.findall(r"^  (before|after)_[a-z]+:\s*$", manifest, re.M))
     catalog = json.loads((ROOT / "catalog" / "extensions.json").read_text(encoding="utf-8"))["extensions"]
     provides = (catalog.get("scopeguard") or {}).get("provides", {})
@@ -80,6 +88,7 @@ def manifest_problems() -> List[str]:
 
 def add_file(zf: zipfile.ZipFile, source: Path, arcname: str) -> None:
     info = zipfile.ZipInfo(arcname, date_time=FIXED_DATE)
+    info.create_system = 3  # Unix 'made by' on every platform: the modes apply and the hash does not depend on the build OS
     executable = source.suffix in (".sh", ".py") and "scripts" in source.parts
     info.external_attr = ((0o100755 if executable else 0o100644) & 0xFFFF) << 16
     info.compress_type = zipfile.ZIP_DEFLATED

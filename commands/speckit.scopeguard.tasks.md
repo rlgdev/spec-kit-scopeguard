@@ -23,7 +23,7 @@ Make sure the task list carries the whole in-scope part of `spec.md`, and **fix 
 
 This command is the `after_tasks` hook when `integration: hooks` is configured; with the default `integration: inline` (with the scopeguard-templates preset) the same gate runs inside `/speckit.tasks` and this command prints `skipped`. It can also be run by hand. The script decides, you resolve. Exit codes: **0** pass, **1** resolve, **3** escalate, **2** setup error.
 
-## Procedure
+## Steps
 
 Start with `N = 0`.
 
