@@ -16,6 +16,8 @@ workflows/
 dist/
 action.yml
 CONTRIBUTING.md
+pytest.ini
+SECURITY.md
 __pycache__/
 *.pyc
 .pytest_cache/

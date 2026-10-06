@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
-"""Build the release archives for scopeGuard.
+"""Build the release archives for scopeGuard and check that every version agrees.
 
     python tools/build.py            # -> dist/scopeguard.zip, dist/scopeguard-preset.zip, dist/SHA256SUMS
+    python tools/build.py --check    # fail when a version disagrees, a referenced file is missing or a catalog count is off (CI)
     python tools/build.py --check-tag v0.1.0
 
-Both archives have their manifest (extension.yml / preset.yml) at the archive
-root, as `specify extension add --from` and `specify preset add --from` expect.
-Archives are reproducible: fixed timestamps, sorted entries, normalized modes.
+What must agree: extension.yml, preset/preset.yml, scripts/python/scopeguard.py (__version__),
+catalog/extensions.json and catalog/presets.json. Both archives have their manifest (extension.yml /
+preset.yml) at the archive root, as `specify extension add --from` and `specify preset add --from`
+expect. Archives are reproducible: fixed timestamps, sorted entries, normalized modes.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 import zipfile
 from pathlib import Path
+from typing import List
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
@@ -35,11 +39,43 @@ def version_of(path: Path, pattern: str) -> str:
 
 
 def versions() -> dict:
-    return {
-        "extension.yml": version_of(ROOT / "extension.yml", r'^\s*version:\s*"?([0-9][^"\s]*)"?'),
-        "preset/preset.yml": version_of(PRESET_ROOT / "preset.yml", r'^\s*version:\s*"?([0-9][^"\s]*)"?'),
+    yml = r'^\s*version:\s*"?([0-9][^"\s]*)"?'
+    found = {
+        "extension.yml": version_of(ROOT / "extension.yml", yml),
+        "preset/preset.yml": version_of(PRESET_ROOT / "preset.yml", yml),
         "scopeguard.py": version_of(ROOT / "scripts" / "python" / "scopeguard.py", r'^__version__\s*=\s*"([^"]+)"'),
     }
+    for name in ("extensions.json", "presets.json"):
+        data = json.loads((ROOT / "catalog" / name).read_text(encoding="utf-8"))
+        for entry in (data.get("extensions") or data.get("presets") or {}).values():
+            found[f"catalog/{name}"] = entry["version"]
+    return found
+
+
+def manifest_problems() -> List[str]:
+    """Files the manifests name exist, and the catalog counts match the manifests."""
+    problems: List[str] = []
+    manifest = (ROOT / "extension.yml").read_text(encoding="utf-8")
+    commands = re.findall(r"file:\s*(commands/[^\s}]+)", manifest)
+    for command in commands:
+        if not (ROOT / command).is_file():
+            problems.append(f"extension.yml names a command file that does not exist: {command}")
+    hooks = len(re.findall(r"^  (before|after)_[a-z]+:\s*$", manifest, re.M))
+    catalog = json.loads((ROOT / "catalog" / "extensions.json").read_text(encoding="utf-8"))["extensions"]
+    provides = (catalog.get("scopeguard") or {}).get("provides", {})
+    if provides.get("commands") != len(commands) or provides.get("hooks") != hooks:
+        problems.append(f"catalog/extensions.json provides {provides} but extension.yml has {len(commands)} commands and {hooks} hooks")
+    preset = (PRESET_ROOT / "preset.yml").read_text(encoding="utf-8")
+    for file in re.findall(r'file:\s*"?([^"\s]+)"?', preset):
+        if not (PRESET_ROOT / file).is_file():
+            problems.append(f"preset/preset.yml names a file that does not exist: {file}")
+    templates = preset.count('type: "template"')
+    wraps = preset.count('type: "command"')
+    presets = json.loads((ROOT / "catalog" / "presets.json").read_text(encoding="utf-8"))["presets"]
+    provides = (presets.get("scopeguard-templates") or {}).get("provides", {})
+    if provides.get("templates") != templates or provides.get("commands") != wraps:
+        problems.append(f"catalog/presets.json provides {provides} but preset.yml has {templates} templates and {wraps} commands")
+    return problems
 
 
 def add_file(zf: zipfile.ZipFile, source: Path, arcname: str) -> None:
@@ -74,17 +110,24 @@ def collect_preset() -> list:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true", help="only check: versions equal, referenced files exist, catalog counts right")
     parser.add_argument("--check-tag", help="fail unless all versions equal this tag (with or without leading v)")
     args = parser.parse_args()
 
+    problems = manifest_problems()
     found = versions()
     if len(set(found.values())) != 1:
-        print(f"version mismatch: {found}", file=sys.stderr)
-        return 1
+        problems.append(f"version mismatch: {found}")
     version = next(iter(found.values()))
     if args.check_tag and args.check_tag.lstrip("v") != version:
-        print(f"tag {args.check_tag} does not match version {version}", file=sys.stderr)
+        problems.append(f"tag {args.check_tag} does not match version {version}")
+    if problems:
+        for problem in problems:
+            print(problem, file=sys.stderr)
         return 1
+    if args.check:
+        print(f"ok: version {version}, manifests and catalogs agree")
+        return 0
 
     outputs = {
         DIST / "scopeguard.zip": collect_extension(),

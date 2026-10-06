@@ -21,8 +21,9 @@ if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) {
 function Test-Python {
     param([string]$Exe, [string[]]$Prefix = @())
     try {
-        $null = & $Exe @Prefix -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>$null
-        return ($LASTEXITCODE -eq 0)
+        # the marker check also rejects the Windows Store alias stub, which prints an install hint
+        $out = & $Exe @Prefix -c 'import sys; print(''scopeguard-python-ok'' if sys.version_info >= (3, 8) else ''too-old'')' 2>$null
+        return (($LASTEXITCODE -eq 0) -and ("$out" -match 'scopeguard-python-ok'))
     } catch {
         return $false
     }

@@ -5,3 +5,4 @@ dist/
 .venv/
 examples/**/.scopeguard/
 examples/**/scopeguard-*.md
+pytest-report.xml

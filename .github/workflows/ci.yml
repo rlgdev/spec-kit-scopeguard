@@ -24,7 +24,34 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install pytest
-      - run: python -m pytest -q
+      - name: pytest
+        shell: bash
+        run: python -m pytest -q -rs --junitxml=pytest-report.xml
+      - name: failing tests as annotations
+        if: failure()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          for case in ET.parse("pytest-report.xml").getroot().iter("testcase"):
+              for bad in list(case.findall("failure")) + list(case.findall("error")):
+                  text = ((bad.get("message") or "") + "\n" + (bad.text or ""))[-3000:]
+                  text = text.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+                  print(f"::error title={case.get('classname')}.{case.get('name')}::{text}")
+          PY
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install pyflakes
+      - run: python -m pyflakes scripts/python tools tests
+      - run: shellcheck scripts/bash/scopeguard.sh
+      - run: python tools/build.py --check
 
   launchers:
     name: launchers (${{ matrix.os }})
@@ -35,9 +62,6 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
-      - name: shellcheck
-        if: runner.os == 'Linux'
-        run: shellcheck scripts/bash/scopeguard.sh
       - name: bash launcher reproduces the missed user story (expects exit 1)
         shell: bash
         working-directory: examples/missing-story

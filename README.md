@@ -3,6 +3,8 @@
 [![CI](https://github.com/rlgdev/spec-kit-scopeguard/actions/workflows/ci.yml/badge.svg)](https://github.com/rlgdev/spec-kit-scopeguard/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+> Part of the **Guardians** family for Spec Kit (scopeGuard · archiGuard · auditGuard). Install the three together with the [Guardians bundle](https://github.com/rlgdev/spec-kit-guardians) and start with its [getting-started guide](https://github.com/rlgdev/spec-kit-guardians/blob/main/docs/getting-started.md).
+
 **Deterministic scope gates for [GitHub Spec Kit](https://github.com/github/spec-kit).**
 No user story or requirement from `spec.md` can be dropped silently by `/speckit.plan`,
 `/speckit.tasks` or `/speckit.implement`. The scope gate runs as a mandatory step inside
@@ -371,6 +373,7 @@ specify preset remove scopeguard-templates
 
 ```bash
 python -m pytest -q          # engine tests
+python tools/build.py --check  # versions, manifests and catalogs agree (CI)
 python tools/build.py        # dist/scopeguard.zip, dist/scopeguard-preset.zip, dist/SHA256SUMS
 ```
 
@@ -378,6 +381,8 @@ To release, bump the version in `extension.yml`, `preset/preset.yml`,
 `scripts/python/scopeguard.py` and `catalog/*.json`, add a CHANGELOG entry, then push a `vX.Y.Z`
 tag or publish a release with that tag in the GitHub UI. The release workflow builds the
 archives and attaches them to the release.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the conventions and the release steps of the family.
 
 ## License
 
