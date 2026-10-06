@@ -500,7 +500,7 @@ def test_mini_yaml_parser_reads_the_shipped_config_template():
     data = sg.parse_simple_yaml(text)
     assert data["mode"] == "enforce"
     assert data["ids"]["requirement_prefixes"] == ["FR", "NFR"]
-    assert data["ids"]["story_pattern"] == r"(?:User\s+Story|US)\s*[-#:]?\s*(\d+)\b"
+    assert data["ids"]["story_key"] == "US" and data["ids"]["story_pattern"] is None
     assert data["plan"]["require_section"] is True
     assert data["features"]["exclude"] == []
     merged = sg._deep_merge(sg.DEFAULT_CONFIG, data)
@@ -825,3 +825,118 @@ def test_preset_wraps_core_commands_with_inline_steps():
         assert f"{gate} --via inline --iteration N --feature-dir <FEATURE_DIR>" in body
         assert "inventory --via inline" in body and "AUTOCORRECT OFF" in body and "TODO(agent)" in body
         assert "scripts/" not in body.replace(".specify/extensions/scopeguard/scripts/", "")
+
+
+# --------------------------------------------------------------------------- story key (v0.4)
+
+UC_SPEC = """# Feature Specification: Orders
+
+### UC-001 - Place an order (Priority: P1)
+
+Text.
+
+### Use Case 2 - Cancel an order (Priority: P2)
+
+Text.
+
+## Requirements
+
+- **BR-001**: One order line per basket item.
+- **BR-002**: An order can be cancelled until it ships.
+"""
+
+UC_PLAN = PLAN_HEAD + """| UC-001 | Place | covered | contracts/orders.yaml | |
+| BR-001 | lines | covered | data-model.md | |
+| BR-002 | cancel | covered | contracts/orders.yaml | |
+"""
+
+UC_TASKS = """# Tasks: Orders
+
+## Phase 3: UC-001 - Place an order
+
+- [x] T001 Order endpoint (BR-001)
+
+## Phase 4: Use Case 2 - Cancel an order
+
+- [ ] T002 Cancel endpoint (BR-002)
+- [ ] T003 [UC-002] Cancel screen
+"""
+
+UC_CONFIG = "ids:\n  story_key: UC\n  story_name: Use Case\n  requirement_prefixes: [BR]\n"
+
+
+def test_story_key_uc_traces_use_cases(tmp_path):
+    make_feature(tmp_path, spec=UC_SPEC, plan=UC_PLAN, tasks=UC_TASKS)
+    write_config(tmp_path, UC_CONFIG)
+    proc = run_cli(tmp_path, "inventory", "--feature-dir", "specs/001-demo")
+    assert proc.returncode == 0, proc.stderr
+    assert "2 use cases, 2 requirements (traced prefixes: UC, BR)" in proc.stdout
+    assert "UC-001" in proc.stdout and "UC-2" in proc.stdout
+    assert "[UC-nnn]" in proc.stdout
+    code, data = gate(tmp_path, "plan")
+    assert code == 1
+    bad = {i["id"] for i in data["gates"][0]["items"] if i["verdict"] == "violation"}
+    assert bad == {"UC-2"}                       # Use Case 2 is missing from the plan
+    (tmp_path / "specs" / "001-demo" / "plan.md").write_text(
+        UC_PLAN + "| UC-002 | Cancel | covered | contracts/orders.yaml | |\n", encoding="utf-8")
+    assert gate(tmp_path, "plan")[0] == 0        # UC-002 and Use Case 2 are the same story
+    code, data = gate(tmp_path, "tasks")
+    assert code == 0, data                       # phase inheritance and [UC-002] labels both carry
+    code, data = gate(tmp_path, "implement")
+    assert code == 1 and {i["id"] for i in items(data).values() if i["verdict"] == "violation"} >= {"UC-2"}
+
+
+def test_story_key_defaults_keep_user_stories(tmp_path):
+    make_feature(tmp_path, plan=plan_with(FULL_ROWS))
+    proc = run_cli(tmp_path, "inventory", "--feature-dir", "specs/001-demo")
+    assert "3 user stories" in proc.stdout and "traced prefixes: US, FR, NFR" in proc.stdout and "[USn]" in proc.stdout
+
+
+@pytest.mark.parametrize("text, message", [
+    ("ids:\n  story_key: U-C\n", "letters only"),
+    ("ids:\n  story_key: FR\n", "both ids.story_key and a requirement prefix"),
+])
+def test_story_key_validation(tmp_path, text, message):
+    make_feature(tmp_path, plan=plan_with(FULL_ROWS))
+    write_config(tmp_path, text)
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo")
+    assert proc.returncode == 2 and message in proc.stderr
+
+
+def test_spec_without_stories_names_the_story_key(tmp_path):
+    make_feature(tmp_path, spec="# Spec\n\n- **BR-001**: x\n", plan=PLAN_HEAD)
+    write_config(tmp_path, UC_CONFIG)
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo")
+    assert proc.returncode == 1 and "defines no use cases" in proc.stdout and "'### Use Case 1" in proc.stdout
+
+
+# --------------------------------------------------------------------------- embedded integration (v0.4)
+
+
+def test_embedded_integration_skips_hooks_and_inline_steps_but_runs_direct_calls(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3")]
+    make_feature(tmp_path, plan=plan_with(rows))
+    write_config(tmp_path, "integration: embedded\n")
+    for via in ("hook", "inline"):
+        proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", via)
+        assert proc.returncode == 0 and "integration is 'embedded'" in proc.stdout, via
+    code, data = gate(tmp_path, "plan")              # the embedding tool calls the command line directly
+    assert code == 1 and "US3" in items(data)
+
+
+def test_configure_embedded_switches_every_hook_off(tmp_path):
+    make_feature(tmp_path)
+    yml = tmp_path / ".specify" / "extensions.yml"
+    yml.write_text(EXTENSIONS_YML, encoding="utf-8")
+    write_config(tmp_path, "integration: embedded\n")
+    proc = run_cli(tmp_path, "configure", "--json")
+    data = json.loads(proc.stdout)
+    assert data["effective_integration"] == "embedded"
+    states = _hook_states(yml.read_text(encoding="utf-8"))
+    for (event, ext, cmd), enabled in states.items():
+        if ext == "scopeguard":
+            assert enabled == "false", (event, cmd)
+    assert states[("before_plan", "git", "speckit.git.commit")] == "true"
+    install_inline_preset(tmp_path)
+    proc = run_cli(tmp_path, "configure")
+    assert "specify preset remove scopeguard-templates" in proc.stdout

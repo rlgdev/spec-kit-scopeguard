@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: scopeguard
   name: "scopeGuard"
-  version: "0.3.0"
+  version: "0.4.0"
   description: "Deterministic scope gates that find and resolve user stories or requirements from spec.md dropped by plan or tasks, and escalate with a problem report when they cannot"
   author: "rlgdev"
   repository: https://github.com/rlgdev/spec-kit-scopeguard
@@ -49,7 +49,7 @@ provides:
   config:
     - name: "scopeguard-config.yml"
       template: "config-template.yml"
-      description: "scopeGuard settings: integration (inline or hooks), autocorrect on/off and iterations, gates, traced ID prefixes, enforce/report mode"
+      description: "scopeGuard settings: integration (inline, hooks or embedded), autocorrect on/off and iterations, gates, story key and traced ID prefixes, enforce/report mode"
       required: false
 
 hooks:

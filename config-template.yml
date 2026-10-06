@@ -13,6 +13,9 @@
 #          scopeGuard falls back to `hooks` automatically.
 # hooks  : the gate runs as separate scopeGuard commands (/speckit.scopeguard.plan,
 #          /speckit.scopeguard.tasks) triggered by Spec Kit's after_plan / after_tasks hooks.
+# embedded: no hooks and no inline steps. The gates run only when another tool calls
+#          scopeGuard's command line, for example archiGuard's gate runner, which then owns
+#          the iteration budget. Do not install the scopeguard-templates preset with it.
 integration: inline
 
 # ── Autocorrect ──────────────────────────────────────────────────────────────
@@ -64,9 +67,15 @@ implement:
 
 # ── What counts as scope ─────────────────────────────────────────────────────
 ids:
-  # Regex matched at the start of spec.md heading text (case-insensitive).
-  # Group 1 captures the story number; the scope ID becomes US<n>.
-  story_pattern: '(?:User\s+Story|US)\s*[-#:]?\s*(\d+)\b'
+  # The key of story IDs. US = Spec Kit user stories ("### User Story 1 - ...", US1, task labels [US1]).
+  # Another key traces another kind of story, e.g. UC for use cases ("### UC-001 - ...", task labels [UC-001]).
+  story_key: US
+  # Long name of a story in spec headings and tasks.md phase titles, e.g. "Use Case".
+  # null = "User Story" for the key US, none for other keys.
+  story_name: null
+  # Regex matched at the start of spec.md heading text (case-insensitive); group 1 captures the
+  # story number. null = derived from story_key and story_name.
+  story_pattern: null
   # Requirement ID prefixes that are part of the traced scope.
   # Add SC to also trace Success Criteria (SC-001, ...).
   requirement_prefixes: [FR, NFR]

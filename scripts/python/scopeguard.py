@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """scopeGuard - deterministic scope-coverage gates for GitHub Spec Kit.
 
-scopeGuard reads the user stories (US1, US2, ...) and requirement IDs
-(FR-001, NFR-001, ...) defined in a feature's ``spec.md`` and verifies, with
+scopeGuard reads the user stories (US1, US2, ... or another story key such as
+UC-001) and requirement IDs (FR-001, NFR-001, ...) defined in a feature's
+``spec.md`` and verifies, with
 plain parsing and set arithmetic (no LLM involved), that every one of them is
 still accounted for after each Spec Kit phase:
 
@@ -36,7 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 EXIT_PASS = 0
 EXIT_FAIL = 1
@@ -45,6 +46,7 @@ EXIT_ESCALATE = 3  # still failing after the last allowed resolution iteration
 
 TOOL = "scopeguard"
 CONFIG_RELATIVE = Path(".specify") / "extensions" / "scopeguard" / "scopeguard-config.yml"
+INTEGRATIONS = ("inline", "hooks", "embedded")
 CONFIG_LOCAL_RELATIVES = (
     Path(".specify") / "extensions" / "scopeguard" / "local-config.yml",  # Spec Kit convention
     Path(".specify") / "extensions" / "scopeguard" / "scopeguard-config.local.yml",
@@ -54,9 +56,11 @@ INLINE_PRESET_DIR = Path(".specify") / "presets" / "scopeguard-templates"
 INLINE_COMMANDS = ("speckit.plan", "speckit.tasks")
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    # inline: the gates are mandatory steps inside /speckit.plan and /speckit.tasks
-    #         (needs the scopeguard-templates preset; falls back to hooks without it).
-    # hooks:  the gates run as separate scopeGuard commands triggered by Spec Kit hooks.
+    # inline:   the gates are mandatory steps inside /speckit.plan and /speckit.tasks
+    #           (needs the scopeguard-templates preset; falls back to hooks without it).
+    # hooks:    the gates run as separate scopeGuard commands triggered by Spec Kit hooks.
+    # embedded: no hooks and no inline steps; the gates run only when another tool calls
+    #           scopeGuard's command line (for example archiGuard's gate runner).
     "integration": "inline",
     "autocorrect": {
         # true:  a failing plan/tasks gate makes the agent fix the artifact and re-check.
@@ -68,9 +72,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # enforce: violations make the gate exit 1.  report: always exit 0 (measure only).
     "mode": "enforce",
     "ids": {
+        # The key of story IDs: US (Spec Kit user stories: US1, task labels [US1]) or another key,
+        # e.g. UC for use cases (UC-001, task labels [UC-001]).
+        "story_key": "US",
+        # Long name of a story in headings and phase titles ("User Story 1"); "" = only the key.
+        # Default: "User Story" for the key US, none for other keys (set e.g. "Use Case").
+        "story_name": None,
         # Matched (case-insensitive) at the start of a spec.md heading's text.
-        # Group 1 must capture the story number; the item ID becomes US<n>.
-        "story_pattern": r"(?:User\s+Story|US)\s*[-#:]?\s*(\d+)\b",
+        # Group 1 must capture the story number. Default: derived from story_key and story_name.
+        "story_pattern": None,
         # Requirement ID prefixes that are part of the traced scope.
         # Add "SC" to also trace Success Criteria.
         "requirement_prefixes": ["FR", "NFR"],
@@ -319,8 +329,10 @@ def load_config(root: Path, explicit: Optional[str]) -> Tuple[Dict[str, Any], Li
 
     if config.get("mode") not in ("enforce", "report"):
         raise ScopeGuardError(f"config: mode must be 'enforce' or 'report', got {config.get('mode')!r}")
-    if config.get("integration") not in ("inline", "hooks"):
-        raise ScopeGuardError(f"config: integration must be 'inline' or 'hooks', got {config.get('integration')!r}")
+    if config.get("integration") not in INTEGRATIONS:
+        raise ScopeGuardError(
+            f"config: integration must be 'inline', 'hooks' or 'embedded', got {config.get('integration')!r}"
+        )
     if not isinstance(config.get("autocorrect"), dict):
         raise ScopeGuardError("config: autocorrect must be a mapping with enabled and max_iterations")
     config["autocorrect"]["enabled"] = _as_bool(config["autocorrect"].get("enabled", True), "autocorrect.enabled")
@@ -339,11 +351,33 @@ def load_config(root: Path, explicit: Optional[str]) -> Tuple[Dict[str, Any], Li
     if isinstance(prefixes, str):
         prefixes = [prefixes]
     config["ids"]["requirement_prefixes"] = [str(p).strip().upper() for p in prefixes if str(p).strip()]
+    story_key = str(config["ids"].get("story_key") or "US").strip().upper()
+    if not re.fullmatch(r"[A-Z]{1,8}", story_key):
+        raise ScopeGuardError(f"config: ids.story_key must be letters only, e.g. US or UC, got {story_key!r}")
+    if story_key in config["ids"]["requirement_prefixes"]:
+        raise ScopeGuardError(f"config: {story_key} is both ids.story_key and a requirement prefix")
+    config["ids"]["story_key"] = story_key
+    name = config["ids"].get("story_name")
+    if name is None:
+        name = "User Story" if story_key == "US" else ""
+    config["ids"]["story_name"] = str(name).strip()
+    if not config["ids"].get("story_pattern"):
+        config["ids"]["story_pattern"] = default_story_pattern(story_key, config["ids"]["story_name"])
     try:
         re.compile(config["ids"]["story_pattern"])
     except re.error as exc:
         raise ScopeGuardError(f"config: invalid ids.story_pattern: {exc}")
     return config, sources
+
+
+def _name_regex(name: str) -> str:
+    return r"\s+".join(re.escape(w) for w in name.split())
+
+
+def default_story_pattern(key: str, name: str) -> str:
+    """Heading pattern for stories: 'User Story 1' / 'US1' (key US), or e.g. 'UC-001' / 'Use Case 1'."""
+    alts = ([_name_regex(name)] if name else []) + [re.escape(key)]
+    return r"(?:" + "|".join(alts) + r")\s*[-#:]?\s*(\d+)\b"
 
 
 def inline_preset_installed(root: Path) -> bool:
@@ -365,6 +399,11 @@ def inline_preset_installed(root: Path) -> bool:
 def effective_integration(root: Path, config: Dict[str, Any]) -> Tuple[str, Optional[str]]:
     """Return (integration actually in force, note). inline falls back to hooks without the preset."""
     wanted = config["integration"]
+    if wanted == "embedded":
+        if inline_preset_installed(root):
+            return wanted, ("integration is 'embedded' but the scopeguard-templates preset is installed; its steps are "
+                            "skipped - remove it: specify preset remove scopeguard-templates")
+        return wanted, None
     if wanted == "inline" and not inline_preset_installed(root):
         return "hooks", (
             "integration is 'inline' but the scopeguard-templates preset (v0.3.0+) is not installed, "
@@ -446,20 +485,45 @@ class IdScheme:
     """Knows how scope IDs look and how to normalize them."""
 
     def __init__(self, config: Dict[str, Any]):
-        self.story_heading_re = re.compile(config["ids"]["story_pattern"], re.I)
+        ids = config["ids"]
+        self.key = str(ids.get("story_key") or "US").upper()
+        name = ids.get("story_name")
+        if name is None:
+            name = "User Story" if self.key == "US" else ""
+        self.name = str(name).strip()
+        self.story_heading_re = re.compile(ids.get("story_pattern") or default_story_pattern(self.key, self.name), re.I)
         self.prefixes: List[str] = list(config["ids"]["requirement_prefixes"])
         prefix_alt = "|".join(re.escape(p) for p in sorted(self.prefixes, key=len, reverse=True))
         self.req_token_re = (
             re.compile(r"(?<![A-Za-z0-9_-])(" + prefix_alt + r")-(\d+)(?![A-Za-z0-9_])") if self.prefixes else None
         )
-        # Story tokens inside table cells: US1, US-1, US 1, User Story 1
-        self.story_token_re = re.compile(r"(?<![A-Za-z0-9])(?:US|User\s+Story)\s*[-#]?\s*(\d+)(?![0-9])", re.I)
-        # Story labels on task lines: [US1] / [US-1] / [US 1]
-        self.story_label_re = re.compile(r"\[\s*US\s*-?\s*(\d+)\s*\]", re.I)
+        key_re = re.escape(self.key)
+        long_re = _name_regex(self.name) if self.name else None
+        alts = ([long_re] if long_re else []) + [key_re]
+        # Story tokens inside table cells: US1, US-1, US 1, User Story 1 (or UC-001, Use Case 1, ...)
+        self.story_token_re = re.compile(r"(?<![A-Za-z0-9])(?:" + "|".join(alts) + r")\s*[-#]?\s*(\d+)(?![0-9])", re.I)
+        # Story labels on task lines: [US1] / [US-1] / [US 1] (or [UC-001])
+        self.story_label_re = re.compile(r"\[\s*" + key_re + r"\s*-?\s*(\d+)\s*\]", re.I)
+        # Story in a tasks.md phase title: "Phase 3: User Story 1 - ..." / "US1" (or "UC-001")
+        self.story_phase_re = re.compile(
+            r"(?:" + ((long_re + "|") if long_re else "") + r"\b" + key_re + r")\s*-?\s*(\d+)\b", re.I)
 
-    @staticmethod
-    def story_key(number: str) -> str:
-        return f"US{int(number)}"
+    def story_key(self, number: str) -> str:
+        return f"US{int(number)}" if self.key == "US" else f"{self.key}-{int(number)}"
+
+    def story_display(self, number: str) -> str:
+        """The ID as people write it: US1, or the key with the number as written (UC-001)."""
+        return f"US{int(number)}" if self.key == "US" else f"{self.key}-{number}"
+
+    @property
+    def stories_label(self) -> str:
+        if self.key == "US":
+            return "user stories"
+        return (self.name.lower() + "s") if self.name else f"stories ({self.key})"
+
+    @property
+    def label_example(self) -> str:
+        return "[USn]" if self.key == "US" else f"[{self.key}-nnn]"
 
     @staticmethod
     def req_key(prefix: str, number: str) -> str:
@@ -472,10 +536,10 @@ class IdScheme:
         return [(self.req_key(m.group(1), m.group(2)), f"{m.group(1)}-{m.group(2)}") for m in self.req_token_re.finditer(text)]
 
     def stories_in_cell(self, text: str) -> List[Tuple[str, str]]:
-        return [(self.story_key(m.group(1)), f"US{int(m.group(1))}") for m in self.story_token_re.finditer(text)]
+        return [(self.story_key(m.group(1)), self.story_display(m.group(1))) for m in self.story_token_re.finditer(text)]
 
     def story_labels(self, text: str) -> List[Tuple[str, str]]:
-        return [(self.story_key(m.group(1)), f"US{int(m.group(1))}") for m in self.story_label_re.finditer(text)]
+        return [(self.story_key(m.group(1)), self.story_display(m.group(1))) for m in self.story_label_re.finditer(text)]
 
     def ids_in_cell(self, text: str) -> List[Tuple[str, str]]:
         found = self.stories_in_cell(text) + self.reqs_in(text)
@@ -520,6 +584,8 @@ class SpecModel:
     path: Path
     items: Dict[str, ScopeItem]
     findings: List[Finding]
+    stories_label: str = "user stories"
+    story_key: str = "US"
 
     @property
     def stories(self) -> List[ScopeItem]:
@@ -704,7 +770,7 @@ def parse_spec(path: Path, scheme: IdScheme, config: Dict[str, Any]) -> SpecMode
                     title = _PRIORITY_RE.sub("", rest)
                     title = title.strip().strip("-–—:|.").strip()
                     key = scheme.story_key(m.group(1))
-                    add(ScopeItem(key, f"US{int(m.group(1))}", "story", title, priority, number))
+                    add(ScopeItem(key, scheme.story_display(m.group(1)), "story", title, priority, number))
             continue
         if req_table_re is None:
             continue
@@ -724,7 +790,8 @@ def parse_spec(path: Path, scheme: IdScheme, config: Dict[str, Any]) -> SpecMode
     if config["spec"].get("require_stories", True) and not any(i.kind == "story" for i in items.values()):
         findings.append(Finding(
             VIOLATION,
-            "spec.md defines no user stories (expected headings like '### User Story 1 - Title (Priority: P1)'); "
+            f"spec.md defines no {scheme.stories_label} (expected headings like "
+            f"'### {(scheme.name + ' 1') if scheme.name else scheme.key + '-001'} - Title (Priority: P1)'); "
             "scope cannot be traced",
             rel,
         ))
@@ -745,7 +812,7 @@ def parse_spec(path: Path, scheme: IdScheme, config: Dict[str, Any]) -> SpecMode
             if key not in defined:
                 findings.append(Finding(WARNING, f"spec.md mentions {display}, which it never defines", f"{rel}:{number}", display))
                 defined.add(key)
-    return SpecModel(path, items, findings)
+    return SpecModel(path, items, findings, scheme.stories_label, scheme.key)
 
 
 def _attach_excerpts(items: Dict[str, ScopeItem], lines: List[str], max_lines: int = 18) -> None:
@@ -940,7 +1007,7 @@ def parse_tasks(path: Path, scheme: IdScheme, config: Dict[str, Any]) -> TasksMo
                 in_coverage_section, coverage_level = True, level
             while story_stack and story_stack[-1][0] >= level:
                 story_stack.pop()
-            m = re.search(r"(?:User\s+Story|\bUS)\s*-?\s*(\d+)\b", title, re.I)
+            m = scheme.story_phase_re.search(title)
             if m:
                 story_stack.append((level, scheme.story_key(m.group(1))))
             continue
@@ -1195,7 +1262,7 @@ def gate_tasks(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config: Dic
             if item.kind == "story":
                 lines.append(f"- [ ] T### [{item.display}] <task that delivers {item.display}: {item.title}>")
             else:
-                lines.append(f"- [ ] T### [US?] <task that implements {item.display}> ({item.display})")
+                lines.append(f"- [ ] T### [{item.display}] <task that implements {item.display}> ({item.display})")
         result.skeleton = lines
     return result
 
@@ -1353,7 +1420,7 @@ def render_gate_text(result: GateResult, root: Path, verbose: bool) -> str:
     out: List[str] = []
     spec = result.spec
     out.append(f"scopeGuard {__version__} | gate: {result.gate} | feature: {rel_path(result.feature_dir, root)}")
-    out.append(f"spec scope: {len(spec.stories)} user stories, {len(spec.requirements)} requirements")
+    out.append(f"spec scope: {len(spec.stories)} {spec.stories_label}, {len(spec.requirements)} requirements")
     out.append("")
     shown = [r for r in result.items if verbose or r.verdict != PASS]
     for r in shown:
@@ -1614,7 +1681,7 @@ HOOK_GATES = {
 def desired_hook_states(integration: str, config: Dict[str, Any]) -> Dict[Tuple[str, str], bool]:
     states = {}
     for (event, command), gate in HOOK_GATES.items():
-        enabled = bool(config[gate].get("enabled", True))
+        enabled = bool(config[gate].get("enabled", True)) and integration != "embedded"
         if gate in ("plan", "tasks"):
             enabled = enabled and integration == "hooks"
         states[(event, command)] = enabled
@@ -1727,9 +1794,14 @@ def configure(root: Path, config: Dict[str, Any], sources: List[str], dry_run: b
     ]
     if eff == "inline":
         out.append("  /speckit.plan and /speckit.tasks run the scope gate as a mandatory step of their own.")
+    elif eff == "embedded":
+        out.append("  scopeGuard runs only when another tool calls its command line (for example archiGuard's gate")
+        out.append("  runner): all scopeGuard hooks are off and the inline steps are skipped.")
     else:
         out.append("  The scope gates run as separate scopeGuard commands from the Spec Kit hooks.")
-    if note:
+    if note and eff == "embedded":
+        out += ["", f"  NOTE: {note}."]
+    elif note:
         out += ["", f"  NOTE: {note}.",
                 "  Install it with: specify preset add --from "
                 "https://github.com/rlgdev/spec-kit-scopeguard/releases/latest/download/scopeguard-preset.zip"]
@@ -1776,8 +1848,8 @@ def render_inventory_text(feature_dir: Path, root: Path, inv: Dict[str, Any], co
     spec: SpecModel = inv["spec"]
     out = [
         f"scopeGuard {__version__} | scope inventory | feature: {rel_path(feature_dir, root)}",
-        f"{len(spec.stories)} user stories, {len(spec.requirements)} requirements "
-        f"(traced prefixes: US, {', '.join(config['ids']['requirement_prefixes']) or '-'})",
+        f"{len(spec.stories)} {spec.stories_label}, {len(spec.requirements)} requirements "
+        f"(traced prefixes: {spec.story_key}, {', '.join(config['ids']['requirement_prefixes']) or '-'})",
         "",
     ]
     for entry in inv["items"]:
@@ -1801,7 +1873,8 @@ def render_inventory_text(feature_dir: Path, root: Path, inv: Dict[str, Any], co
         "plan handles it) or 'deferred' (only with a reason the user approved). No ID may be left out."
     )
     out.append(
-        "- tasks.md must carry every ID not deferred in the plan: user stories through tasks labelled [USn], "
+        f"- tasks.md must carry every ID not deferred in the plan: {spec.stories_label} through tasks labelled "
+        f"{IdScheme(config).label_example}, "
         "requirements by naming the ID in a task description or in tasks.md's Scope Coverage table."
     )
     out.append("- Never renumber, merge or drop IDs from spec.md to make a gate pass.")
@@ -1865,7 +1938,7 @@ def render_report_markdown(feature_dir: Path, root: Path, matrix: Dict[str, Any]
     out = [
         f"## scopeGuard coverage report - `{rel_path(feature_dir, root)}`",
         "",
-        f"{len(spec.stories)} user stories, {len(spec.requirements)} requirements traced.",
+        f"{len(spec.stories)} {spec.stories_label}, {len(spec.requirements)} requirements traced.",
         "",
         "| Phase | Verdict | Pass | Waived | Violations | Coverage |",
         "|-------|---------|------|--------|------------|----------|",
@@ -2049,7 +2122,13 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             eff, integration_note = effective_integration(root, config)
             wanted = "inline" if args.via == "inline" else "hooks"
             if eff != wanted:
-                if eff == "inline":
+                if eff == "embedded":
+                    msg = (
+                        f"scopeGuard: {args.command} skipped here - integration is 'embedded', so scopeGuard runs only "
+                        "when the tool that embeds it calls it (for example archiGuard's gate runner). Nothing to do; "
+                        "continue."
+                    )
+                elif eff == "inline":
                     msg = (
                         f"scopeGuard: {args.command} skipped here - integration is 'inline', so this step runs "
                         "inside /speckit.plan and /speckit.tasks. Nothing to do; continue. (Run the scopeguard "

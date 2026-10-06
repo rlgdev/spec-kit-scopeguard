@@ -84,11 +84,11 @@ From your Spec Kit project root:
 
 ```bash
 # 1. the extension: the checker, its commands and hooks, and the config file
-specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.3.0/scopeguard.zip
+specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.0/scopeguard.zip
 
 # 2. the preset: makes the gate a step of /speckit.plan and /speckit.tasks,
 #    and adds the "Scope Coverage" tables to the plan and tasks templates
-specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.3.0/scopeguard-preset.zip
+specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.0/scopeguard-preset.zip
 
 # 3. apply the config (default: gates inline in /speckit.plan and /speckit.tasks, scopeGuard hooks off)
 bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
@@ -97,7 +97,7 @@ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
 ```
 
 Spec Kit asks you to confirm installs from a URL; answer `y`. Use `releases/latest/download/...`
-instead of `releases/download/v0.3.0/...` to always get the newest release.
+instead of `releases/download/v0.4.0/...` to always get the newest release.
 
 <details>
 <summary>Install through a catalog (for teams)</summary>
@@ -130,7 +130,7 @@ From [`examples/missing-story`](examples/missing-story). The plan in this exampl
 
 ```text
 $ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan
-scopeGuard 0.3.0 | gate: plan | feature: specs/001-team-board
+scopeGuard 0.4.0 | gate: plan | feature: specs/001-team-board
 spec scope: 4 user stories, 7 requirements
 
   [FAIL]   US3      Share a board with teammates (P2)
@@ -221,8 +221,9 @@ created when you install the extension. Every key is optional; the full list wit
 
 ```yaml
 # Where the gate runs:
-#   inline = mandatory step inside /speckit.plan and /speckit.tasks (default; needs the preset)
-#   hooks  = separate scopeGuard commands triggered by Spec Kit hooks
+#   inline   = mandatory step inside /speckit.plan and /speckit.tasks (default; needs the preset)
+#   hooks    = separate scopeGuard commands triggered by Spec Kit hooks
+#   embedded = only when another tool calls scopeGuard's command line (e.g. archiGuard)
 integration: inline
 
 autocorrect:
@@ -240,6 +241,8 @@ implement:
   enabled: true          # the optional after_implement check
 
 ids:
+  story_key: US                     # or UC: use cases (UC-001, task labels [UC-001]) instead of user stories
+  story_name: null                  # e.g. "Use Case" for headings like "### Use Case 2 - ..."
   requirement_prefixes: [FR, NFR]   # add SC to trace Success Criteria too
 unknown_ids: violation              # IDs in plan/tasks that spec.md does not define
 features:
@@ -252,7 +255,7 @@ off, run `configure`. It switches the matching scopeGuard hooks on or off in
 
 ```text
 $ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
-scopeGuard 0.3.0 | configure
+scopeGuard 0.4.0 | configure
 config: .specify/extensions/scopeguard/scopeguard-config.yml
 
   integration   : inline
@@ -282,6 +285,21 @@ Two safety nets mean the config is never silently out of sync with the installed
   installed or is disabled, scopeGuard falls back to the hooks, and `configure` tells you what to
   install.
 
+### Embedded in another tool
+
+With `integration: embedded`, scopeGuard has no hooks and no inline steps of its own: `configure`
+switches every scopeGuard hook off, and the inline steps and hook commands print `skipped`. The gates
+run only when another tool calls the command line (`scopeguard.py plan --feature-dir ... --json`), as
+[archiGuard](https://github.com/rlgdev/spec-kit-archiguard) does for its scope gate. That tool then owns
+the iteration budget and the escalation. Do not install the scopeguard-templates preset with it.
+
+### Use cases instead of user stories
+
+The story key is configurable. With `ids.story_key: UC` (and `story_name: Use Case` if the spec also
+writes the long form), scopeGuard traces use cases: headings `### UC-001 - Place an order` or
+`### Use Case 1 - ...`, Scope Coverage rows `UC-001`, task labels `[UC-001]`, and tasks.md phase titles
+`Phase 3: UC-001 - ...`. `UC-001`, `UC-1` and `Use Case 1` are the same item.
+
 Personal overrides go in `local-config.yml` next to the config file. For a single run you can use
 the environment variables `SCOPEGUARD_INTEGRATION`, `SCOPEGUARD_AUTOCORRECT`,
 `SCOPEGUARD_MAX_ITERATIONS` and `SCOPEGUARD_MODE`.
@@ -293,7 +311,7 @@ writes the report to the job summary:
 
 ```yaml
 - uses: actions/checkout@v5
-- uses: rlgdev/spec-kit-scopeguard@v0.3.0
+- uses: rlgdev/spec-kit-scopeguard@v0.4.0
   with:
     command: check        # check | plan | tasks | implement | report
     features: all         # or specs/001-my-feature
@@ -339,7 +357,8 @@ per-run record. To measure without blocking anyone, set `mode: report`.
   result after every iteration and enforces the iteration limit, so the loop cannot run forever
   or end in a claimed success while items are still missing.
 - IDs come from the standard Spec Kit spec format (`### User Story N - Title (Priority: Pn)`,
-  `- **FR-001**: ...`). Other heading styles can be matched with `ids.story_pattern`.
+  `- **FR-001**: ...`). Another story key (`ids.story_key`, e.g. `UC`) or heading style
+  (`ids.story_pattern`) can be configured.
 
 ## Uninstall
 

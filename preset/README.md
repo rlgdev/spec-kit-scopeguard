@@ -17,7 +17,7 @@ Pairs with the [scopeGuard extension](https://github.com/rlgdev/spec-kit-scopegu
 Install both, then apply the config:
 
 ```bash
-specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.3.0/scopeguard.zip
-specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.3.0/scopeguard-preset.zip
+specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.0/scopeguard.zip
+specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.0/scopeguard-preset.zip
 bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
 ```

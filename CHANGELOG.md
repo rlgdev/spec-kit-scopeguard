@@ -4,6 +4,27 @@ All notable changes to scopeGuard are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-10-06
+
+### Added
+
+- **Configurable story key.** `ids.story_key` (default `US`) and `ids.story_name` (default
+  `User Story` for `US`). With `story_key: UC` scopeGuard traces use cases: headings
+  `### UC-001 - ...` or `### Use Case 1 - ...`, Scope Coverage rows, task labels `[UC-001]` and
+  tasks.md phase titles. `ids.story_pattern` is now derived from the key unless you set it. The
+  key cannot also be a requirement prefix.
+- **`integration: embedded`.** No hooks and no inline steps: `configure` switches every scopeGuard
+  hook off (implement included), the inline steps and hook commands print `skipped`, and the gates
+  run only when another tool calls the command line, for example archiGuard's gate runner. `configure`
+  warns when the scopeguard-templates preset is installed next to it.
+
+### Changed
+
+- Messages, the inventory and the reports name the configured story kind (for example "2 use cases",
+  "traced prefixes: UC, BR") instead of always "user stories".
+- The task skeleton for a story without tasks shows the story's own label (for example `[US3]`)
+  instead of `[US?]`.
+
 ## [0.3.0] - 2026-10-05
 
 ### Added

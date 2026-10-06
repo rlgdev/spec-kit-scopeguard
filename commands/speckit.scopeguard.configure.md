@@ -20,6 +20,7 @@ Show and apply the scopeGuard settings from `.specify/extensions/scopeguard/scop
 
 - `integration: inline`: the scope gate is a mandatory step inside `/speckit.plan` and `/speckit.tasks`, and the separate scopeGuard hooks are switched off. This needs the scopeguard-templates preset.
 - `integration: hooks`: the gate runs as separate scopeGuard commands from Spec Kit's hooks.
+- `integration: embedded`: scopeGuard has no hooks and no inline steps; it runs only when another tool (for example archiGuard) calls its command line.
 - `autocorrect.enabled` and `autocorrect.max_iterations`: whether a failing gate fixes the plan or task list itself, and how many fix-and-recheck iterations it gets before escalating.
 
 ## Steps
