@@ -6,6 +6,8 @@ All notable changes to scopeGuard are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-07
+
 ### Added
 
 - `pytest.ini` (tests under `tests/`, no cache directory) as in the siblings.
@@ -28,7 +30,7 @@ All notable changes to scopeGuard are documented here. The format follows
 
 - Python 3.9 is now the stated minimum everywhere (README, `extension.yml`, launchers, engine docstring) and the
   engine refuses older interpreters like the siblings; CI never tested 3.8.
-- The `scopeguard-sdd` workflow carries the extension's version (0.4.0; it had stayed at 0.1.0) and
+- The `scopeguard-sdd` workflow carries the extension's version (it had stayed at 0.1.0) and
   `tools/build.py --check` keeps the two equal, as in archiGuard.
 
 ### Fixed

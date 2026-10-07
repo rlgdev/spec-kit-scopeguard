@@ -41,7 +41,7 @@ if sys.version_info < (3, 9):
     sys.stderr.write("scopeGuard: ERROR: Python 3.9 or newer is required\n")
     sys.exit(2)
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 EXIT_PASS = 0
 EXIT_FAIL = 1

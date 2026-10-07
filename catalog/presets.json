@@ -6,11 +6,11 @@
     "scopeguard-templates": {
       "name": "scopeGuard Templates",
       "id": "scopeguard-templates",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "description": "Makes the scopeGuard scope gate a mandatory step of /speckit.plan and /speckit.tasks and adds Scope Coverage tables to the plan and tasks templates.",
       "author": "rlgdev",
       "repository": "https://github.com/rlgdev/spec-kit-scopeguard",
-      "download_url": "https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.0/scopeguard-preset.zip",
+      "download_url": "https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.1/scopeguard-preset.zip",
       "homepage": "https://github.com/rlgdev/spec-kit-scopeguard",
       "documentation": "https://github.com/rlgdev/spec-kit-scopeguard/blob/main/preset/README.md",
       "license": "MIT",

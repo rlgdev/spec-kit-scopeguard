@@ -87,11 +87,11 @@ From your Spec Kit project root:
 
 ```bash
 # 1. the extension: the checker, its commands and hooks, and the config file
-specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.0/scopeguard.zip
+specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.1/scopeguard.zip
 
 # 2. the preset: makes the gate a step of /speckit.plan and /speckit.tasks,
 #    and adds the "Scope Coverage" tables to the plan and tasks templates
-specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.0/scopeguard-preset.zip
+specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.1/scopeguard-preset.zip
 
 # 3. apply the config (default: gates inline in /speckit.plan and /speckit.tasks, scopeGuard hooks off)
 bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
@@ -100,7 +100,7 @@ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
 ```
 
 Spec Kit asks you to confirm the extension install from a URL (step 1); answer `y`. The preset install (step 2) does not ask. Use `releases/latest/download/...`
-instead of `releases/download/v0.4.0/...` to always get the newest release.
+instead of `releases/download/v0.4.1/...` to always get the newest release.
 
 <details>
 <summary>Install through a catalog (for teams)</summary>
@@ -133,7 +133,7 @@ From [`examples/missing-story`](examples/missing-story). The plan in this exampl
 
 ```text
 $ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan
-scopeGuard 0.4.0 | gate: plan | feature: specs/001-team-board
+scopeGuard 0.4.1 | gate: plan | feature: specs/001-team-board
 spec scope: 4 user stories, 7 requirements
 
   [FAIL]   US3      Share a board with teammates (P2)
@@ -259,7 +259,7 @@ off, run `configure`. It switches the matching scopeGuard hooks on or off in
 
 ```text
 $ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
-scopeGuard 0.4.0 | configure
+scopeGuard 0.4.1 | configure
 config: .specify/extensions/scopeguard/scopeguard-config.yml
 
   integration   : inline
@@ -315,7 +315,7 @@ writes the report to the job summary:
 
 ```yaml
 - uses: actions/checkout@v5
-- uses: rlgdev/spec-kit-scopeguard@v0.4.0
+- uses: rlgdev/spec-kit-scopeguard@v0.4.1
   with:
     command: check        # check | plan | tasks | implement | report
     features: all         # or specs/001-my-feature

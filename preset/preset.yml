@@ -3,7 +3,7 @@ schema_version: "1.0"
 preset:
   id: "scopeguard-templates"
   name: "scopeGuard Templates"
-  version: "0.4.0"
+  version: "0.4.1"
   description: "Makes the scopeGuard scope gate a mandatory step of /speckit.plan and /speckit.tasks and adds Scope Coverage tables to the plan and tasks templates (pairs with the scopeguard extension)"
   author: "rlgdev"
   repository: "https://github.com/rlgdev/spec-kit-scopeguard"
