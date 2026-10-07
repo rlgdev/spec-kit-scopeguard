@@ -24,7 +24,7 @@ jobs:
             python: "3.13"
             yaml: pyyaml       # the engine prefers PyYAML when importable; the configure test's PyYAML assertions need it
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
@@ -51,7 +51,7 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
@@ -68,7 +68,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: bash launcher reproduces the missed user story (expects exit 1)
         shell: bash
         working-directory: examples/missing-story
@@ -99,7 +99,7 @@ jobs:
       matrix:
         speckit: ["specify-cli", "specify-cli==0.12.17"]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -111,7 +111,7 @@ jobs:
     name: GitHub Action self-test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: run the action on the example (must fail)
         id: gate
         continue-on-error: true
