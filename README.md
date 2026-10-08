@@ -68,6 +68,9 @@ bounded loop:
    writes `scopeguard-escalation-<gate>.md` into the feature directory. The agent then completes
    the report: for each unresolved item, what it tried, the blocker, and the decision it needs from you.
    It reports this back to you and stops the command, instead of looping or claiming success.
+   A stopped command does not reach its post-execution hooks, also those of other extensions (git's commit,
+   agent-context's update): inside `/speckit.plan` and `/speckit.tasks` (`integration: inline`) the gate lists them
+   under `NOT RUN`, and they run when the command passes.
 
 If an item can only be included with information or a decision that only you can give, the agent
 leaves it open, so you get a problem report instead of a guess. With `autocorrect.enabled: false`
@@ -105,13 +108,24 @@ instead of `releases/download/v0.4.1/...` to always get the newest release.
 <details>
 <summary>Install through a catalog (for teams)</summary>
 
+A project catalog file (`.specify/extension-catalogs.yml`, `.specify/preset-catalogs.yml`) **replaces** Spec Kit's
+own catalogs, so add those first; without them every other extension disappears from `specify extension search`,
+`info` and `update`. (With a user-level `~/.specify/` catalog file, add its entries instead.)
+
 ```bash
-specify extension catalog add https://raw.githubusercontent.com/rlgdev/spec-kit-scopeguard/main/catalog/extensions.json --name scopeguard --install-allowed
+specify extension catalog add https://raw.githubusercontent.com/github/spec-kit/main/extensions/catalog.json            --name default    --priority 1  --install-allowed
+specify extension catalog add https://raw.githubusercontent.com/github/spec-kit/main/extensions/catalog.community.json  --name community  --priority 20 --no-install-allowed
+specify extension catalog add https://raw.githubusercontent.com/rlgdev/spec-kit-scopeguard/main/catalog/extensions.json --name scopeguard --priority 10 --install-allowed
 specify extension add scopeguard
 
-specify preset catalog add https://raw.githubusercontent.com/rlgdev/spec-kit-scopeguard/main/catalog/presets.json --name scopeguard --install-allowed
+specify preset catalog add https://raw.githubusercontent.com/github/spec-kit/main/presets/catalog.json                  --name default    --priority 1  --install-allowed
+specify preset catalog add https://raw.githubusercontent.com/github/spec-kit/main/presets/catalog.community.json        --name community  --priority 20 --no-install-allowed
+specify preset catalog add https://raw.githubusercontent.com/rlgdev/spec-kit-scopeguard/main/catalog/presets.json       --name scopeguard --priority 10 --install-allowed
 specify preset add scopeguard-templates
 ```
+
+`community` comes after the scopeGuard catalog: it is discovery-only, and the catalog you trust must win a
+shared id.
 
 </details>
 
@@ -296,6 +310,8 @@ switches every scopeGuard hook off, and the inline steps and hook commands print
 run only when another tool calls the command line (`scopeguard.py plan --feature-dir ... --json`), as
 [archiGuard](https://github.com/rlgdev/spec-kit-archiguard) does for its scope gate. That tool then owns
 the iteration budget and the escalation. Do not install the scopeguard-templates preset with it.
+Without archiGuard installed no scope gate runs at all: `configure` and the skipped steps say so. Set
+`integration: inline` (with the preset) or `hooks` when you remove archiGuard and keep scopeGuard.
 
 ### Use cases instead of user stories
 
@@ -371,8 +387,8 @@ per-run record. To measure without blocking anyone, set `mode: report`.
 ## Uninstall
 
 ```bash
+specify preset remove scopeguard-templates     # first: the preset wraps /speckit.plan and /speckit.tasks around scopeGuard
 specify extension remove scopeguard
-specify preset remove scopeguard-templates
 ```
 
 ## Development
