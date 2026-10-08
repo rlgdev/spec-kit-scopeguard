@@ -33,7 +33,7 @@ Run the scopeGuard checker from the repository root. Use the variant that matche
 
 What to do with the result:
 
-- **The checker is not there** (the shell finds no such file, for example exit `127`): scopeGuard is not installed
+- **The checker is not there** (the shell or Python says the file does not exist: `No such file or directory`, `can't open file`, `is not recognized`; whatever the exit code): scopeGuard is not installed
   in this project. Report `scopeGuard not installed - skipped (remove the preset: specify preset remove scopeguard-templates)`,
   skip step B and continue the command normally.
 - **It prints `skipped`.** scopeGuard runs through hooks in this project. Continue normally and skip step B.
