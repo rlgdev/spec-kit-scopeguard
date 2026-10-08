@@ -6,6 +6,28 @@ All notable changes to scopeGuard are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- When a gate escalates inside `/speckit.plan` or `/speckit.tasks` (`--via inline`), the output names the other
+  extensions' `after_plan` / `after_tasks` hooks the stopped command skips (`NOT RUN: ...`, for example git's commit),
+  and the preset tells the agent to report them.
+- `configure` and the skipped inline and hook steps warn when `integration: embedded` while archiGuard, the tool that
+  runs the scope gate, is not installed: no scope gate runs then (for example after the Guardians bundle was removed
+  from a project where scopeGuard was installed before it).
+- The preset steps say what to do when the scopeGuard extension is gone (`scopeGuard not installed - skipped`, remove
+  the preset) instead of failing the wrapped command.
+
+### Changed
+
+- The catalog install instructions add Spec Kit's `default` and `community` catalogs before the scopeGuard catalog:
+  a project catalog file replaces Spec Kit's own catalogs, and the earlier instructions hid every other extension of
+  the project from `specify extension search`, `info` and `update`.
+
+### Fixed
+
+- `configure` keeps the line endings of `.specify/extensions.yml`. Spec Kit writes it with CRLF on Windows; rewritten
+  with LF, `git diff` showed every hook of every other extension removed and added again.
+
 ## [0.4.1] - 2026-10-07
 
 ### Added

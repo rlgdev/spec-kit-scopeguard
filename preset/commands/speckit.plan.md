@@ -33,6 +33,9 @@ Run the scopeGuard checker from the repository root. Use the variant that matche
 
 What to do with the result:
 
+- **The checker is not there** (the shell finds no such file, for example exit `127`): scopeGuard is not installed
+  in this project. Report `scopeGuard not installed - skipped (remove the preset: specify preset remove scopeguard-templates)`,
+  skip step B and continue the command normally.
 - **It prints `skipped`.** scopeGuard runs through hooks in this project. Continue normally and skip step B.
 - **It prints the scope list.** It shows every user story and requirement ID of `spec.md`, plus the scope contract. This list is binding for the plan:
   - `plan.md` must end with a `## Scope Coverage` table holding exactly one row per printed ID.
@@ -63,6 +66,6 @@ The script decides; you resolve. Exit codes: **0** pass (or skipped), **1** reso
      1. Open the problem report named in the output (`scopeguard-escalation-plan.md` in the feature directory).
      2. Replace every `TODO(agent)` with what you attempted for that item in each iteration, the blocker, and the concrete decision needed from the user.
      3. Report to the user: `scopeGuard: ESCALATED — <n> item(s) could not be included in the plan`, then each item's ID, title, blocker and decision needed, and the path of the report.
-   - **The command ends here.** Do not run the after_plan hooks and do not write the Completion Report. The plan is not complete.
+   - **The command ends here.** Do not run the after_plan hooks and do not write the Completion Report. Tell the user which hooks this skips, as the output lists them under `NOT RUN`. The plan is not complete.
 
 5. **Exit 2: error.** Show the message and the fix, then continue with the Completion Report and say the scope gate did not run.

@@ -421,10 +421,15 @@ def effective_integration(root: Path, config: Dict[str, Any]) -> Tuple[str, Opti
     """Return (integration actually in force, note). inline falls back to hooks without the preset."""
     wanted = config["integration"]
     if wanted == "embedded":
+        notes = []
+        if not (root / ".specify" / "extensions" / "archiguard" / "extension.yml").is_file():
+            notes.append("integration is 'embedded' but archiGuard, the tool that runs the scope gate, is not installed, "
+                         "so no scope gate runs - set integration: inline (with the scopeguard-templates preset) or hooks "
+                         "in scopeguard-config.yml, then run configure")
         if inline_preset_installed(root):
-            return wanted, ("integration is 'embedded' but the scopeguard-templates preset is installed; its steps are "
-                            "skipped - remove it: specify preset remove scopeguard-templates")
-        return wanted, None
+            notes.append("integration is 'embedded' but the scopeguard-templates preset is installed; its steps are "
+                         "skipped - remove it: specify preset remove scopeguard-templates")
+        return wanted, ("; ".join(notes) or None)
     if wanted == "inline" and not inline_preset_installed(root):
         return "hooks", (
             "integration is 'inline' but the scopeguard-templates preset (v0.3.0+) is not installed, "
@@ -1776,6 +1781,62 @@ def set_hook_flags(text: str, desired: Dict[Tuple[str, str], bool]) -> Tuple[str
     return "\n".join(out), found
 
 
+def hook_entries(text: str) -> List[Tuple[str, Dict[str, str]]]:
+    """(event, {field: scalar}) for each entry of the `hooks:` map of a Spec Kit extensions.yml, read line by line the
+    way set_hook_flags reads it (the config reader without PyYAML does not read lists of mappings)."""
+    lines = text.split("\n")
+    out: List[Tuple[str, Dict[str, str]]] = []
+    in_hooks = False
+    event: Optional[str] = None
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.strip()
+        if stripped and indent == 0 and not stripped.startswith("#"):
+            in_hooks, event = stripped == "hooks:", None
+            i += 1
+            continue
+        item = re.match(r"^(\s*)-\s+(.*)$", line)
+        if not (in_hooks and item and event):
+            ev = re.match(r"^\s+([A-Za-z0-9_]+):\s*$", line) if in_hooks and item is None else None
+            if ev:
+                event = ev.group(1)
+            i += 1
+            continue
+        item_indent = len(item.group(1))
+        fields: Dict[str, str] = {}
+        body = [(item_indent + 2, item.group(2))]
+        j = i + 1
+        while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip(" ")) > item_indent):
+            body.append((len(lines[j]) - len(lines[j].lstrip(" ")), lines[j].strip()))
+            j += 1
+        for field_indent, content in body:
+            m = re.match(r"^([A-Za-z0-9_]+):\s*(.*)$", content)
+            if m and field_indent == item_indent + 2:
+                fields[m.group(1)] = _scalar(_strip_yaml_comment(m.group(2)))
+        out.append((event, fields))
+        i = j
+    return out
+
+
+def hooks_not_run(root: Path, event: str) -> List[str]:
+    """The other extensions' enabled hooks of `event` (after_plan, after_tasks): a command that stops at the gate never
+    reaches its Mandatory Post-Execution Hooks, so these do not run this time."""
+    ext_yml = root / EXTENSIONS_YML
+    if not ext_yml.is_file():
+        return []
+    out = []
+    for ev, fields in hook_entries(read_text(ext_yml)):
+        if ev != event or fields.get("extension", "scopeguard") == "scopeguard":
+            continue
+        if fields.get("enabled", "true").lower() in ("false", "no", "off", "0"):
+            continue
+        out.append(f"{fields['extension']}: {fields.get('command', '?')}"
+                   + (" (optional)" if fields.get("optional", "").lower() == "true" else ""))
+    return out
+
+
 def configure(root: Path, config: Dict[str, Any], sources: List[str], dry_run: bool) -> Tuple[str, Dict[str, Any], int]:
     eff, note = effective_integration(root, config)
     ext_yml = root / EXTENSIONS_YML
@@ -1798,8 +1859,10 @@ def configure(root: Path, config: Dict[str, Any], sources: List[str], dry_run: b
             pass
         except Exception as exc:
             raise ScopeGuardError(f"refusing to write .specify/extensions.yml: result would not parse ({exc})")
+        # keep the file's line ending: Spec Kit writes it with the platform's (CRLF on Windows), so git shows one line
+        eol = "\r\n" if b"\r\n" in ext_yml.read_bytes() else "\n"
         with open(ext_yml, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(updated)
+            handle.write(updated.replace("\n", eol))
 
     ac = config["autocorrect"]
     out = [
@@ -2149,6 +2212,8 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                         "when the tool that embeds it calls it (for example archiGuard's gate runner). Nothing to do; "
                         "continue."
                     )
+                    if integration_note:
+                        msg += f" Note: {integration_note}."
                 elif eff == "inline":
                     msg = (
                         f"scopeGuard: {args.command} skipped here - integration is 'inline', so this step runs "
@@ -2276,6 +2341,12 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             print("\n\n".join(render_gate_text(r, root, args.verbose) for r in results))
             if config["mode"] == "report" and failed:
                 print("\n(report mode: violations do not fail this run)")
+            if getattr(args, "via", None) == "inline" and escalated and config["mode"] == "enforce":
+                for gate in sorted({r.gate for r in results if r.escalated}):
+                    skipped = hooks_not_run(root, f"after_{gate}")
+                    if skipped:
+                        print(f"\nNOT RUN: /speckit.{gate} ends here, so these after_{gate} hooks of other extensions do "
+                              f"not run: {'; '.join(skipped)}. Tell the user; they run when the command is run again and passes.")
         if args.out:
             _write_out(args.out, "\n".join(render_gate_markdown(r, root) for r in results), args.append)
         if failed and config["mode"] == "enforce":
