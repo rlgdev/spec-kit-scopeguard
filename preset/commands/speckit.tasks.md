@@ -34,9 +34,11 @@ Run the scopeGuard checker from the repository root. Use the variant that matche
 
 What to do with the result:
 
-- **The checker is not there** (the shell or Python says the file does not exist: `No such file or directory`, `can't open file`, `is not recognized`; whatever the exit code): scopeGuard is not installed
-  in this project. Report `scopeGuard not installed - skipped (remove the preset: specify preset remove scopeguard-templates)`,
-  skip step B and continue the command normally.
+- **The checker is not there**: the error says a file under `.specify/extensions/scopeguard/` does not exist
+  (`No such file or directory`, `can't open file`, `is not recognized`, whatever the exit code), so scopeGuard is
+  not installed in this project. Report `scopeGuard not installed - skipped (remove the preset: specify preset remove scopeguard-templates)`,
+  skip step B and continue the command normally. Any other error (for example no `python` on PATH) is not this
+  case: treat it as **Exit code 2**.
 - **It prints `skipped`.** scopeGuard runs through hooks in this project. Continue normally and skip step B.
 - **It prints the scope list.** Every ID shown with a `[plan: ...]` status other than `deferred` must be carried by at least one task:
   - user stories by tasks labelled `[USn]`;

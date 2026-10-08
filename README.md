@@ -69,7 +69,8 @@ bounded loop:
    the report: for each unresolved item, what it tried, the blocker, and the decision it needs from you.
    It reports this back to you and stops the command, instead of looping or claiming success.
    A stopped command does not reach its post-execution hooks, also those of other extensions (git's commit,
-   agent-context's update): the gate lists them under `NOT RUN`, and they run when the command passes.
+   agent-context's update): inside `/speckit.plan` and `/speckit.tasks` (`integration: inline`) the gate lists them
+   under `NOT RUN`, and they run when the command passes.
 
 If an item can only be included with information or a decision that only you can give, the agent
 leaves it open, so you get a problem report instead of a guess. With `autocorrect.enabled: false`
@@ -386,8 +387,8 @@ per-run record. To measure without blocking anyone, set `mode: report`.
 ## Uninstall
 
 ```bash
+specify preset remove scopeguard-templates     # first: the preset wraps /speckit.plan and /speckit.tasks around scopeGuard
 specify extension remove scopeguard
-specify preset remove scopeguard-templates
 ```
 
 ## Development

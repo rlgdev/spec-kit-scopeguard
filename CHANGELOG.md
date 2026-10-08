@@ -9,13 +9,13 @@ All notable changes to scopeGuard are documented here. The format follows
 ### Added
 
 - When a gate escalates inside `/speckit.plan` or `/speckit.tasks` (`--via inline`), the output names the other
-  extensions' `after_plan` / `after_tasks` hooks the stopped command skips (`NOT RUN: ...`, for example git's commit),
-  and the preset tells the agent to report them.
+  extensions' `after_plan` / `after_tasks` hooks the stopped command skips (`NOT RUN: ...`, for example git's commit;
+  hooks with a `condition`, which the agent skips anyway, are left out), and the preset tells the agent to report them.
 - `configure` and the skipped inline and hook steps warn when `integration: embedded` while archiGuard, the tool that
   runs the scope gate, is not installed: no scope gate runs then (for example after the Guardians bundle was removed
   from a project where scopeGuard was installed before it).
-- The preset steps say what to do when the scopeGuard extension is gone (`scopeGuard not installed - skipped`, remove
-  the preset) instead of failing the wrapped command.
+- The preset steps say what to do when the scopeGuard extension is gone (the error names a file under
+  `.specify/extensions/scopeguard/`: `scopeGuard not installed - skipped`, remove the preset) and continue the command.
 
 ### Changed
 

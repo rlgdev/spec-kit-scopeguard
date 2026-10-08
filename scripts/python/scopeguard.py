@@ -1822,7 +1822,8 @@ def hook_entries(text: str) -> List[Tuple[str, Dict[str, str]]]:
 
 def hooks_not_run(root: Path, event: str) -> List[str]:
     """The other extensions' enabled hooks of `event` (after_plan, after_tasks): a command that stops at the gate never
-    reaches its Mandatory Post-Execution Hooks, so these do not run this time."""
+    reaches its Mandatory Post-Execution Hooks, so these do not run this time. A hook with a `condition` is left out:
+    the agent skips those anyway (Spec Kit leaves conditions to its HookExecutor)."""
     ext_yml = root / EXTENSIONS_YML
     if not ext_yml.is_file():
         return []
@@ -1831,6 +1832,8 @@ def hooks_not_run(root: Path, event: str) -> List[str]:
         if ev != event or fields.get("extension", "scopeguard") == "scopeguard":
             continue
         if fields.get("enabled", "true").lower() in ("false", "no", "off", "0"):
+            continue
+        if fields.get("condition", "").lower() not in ("", "null", "~"):
             continue
         out.append(f"{fields['extension']}: {fields.get('command', '?')}"
                    + (" (optional)" if fields.get("optional", "").lower() == "true" else ""))
@@ -1860,7 +1863,8 @@ def configure(root: Path, config: Dict[str, Any], sources: List[str], dry_run: b
         except Exception as exc:
             raise ScopeGuardError(f"refusing to write .specify/extensions.yml: result would not parse ({exc})")
         # keep the file's line ending: Spec Kit writes it with the platform's (CRLF on Windows), so git shows one line
-        eol = "\r\n" if b"\r\n" in ext_yml.read_bytes() else "\n"
+        raw = ext_yml.read_bytes()
+        eol = "\r\n" if 2 * raw.count(b"\r\n") > raw.count(b"\n") else "\n"   # the ending most lines use
         with open(ext_yml, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(updated.replace("\n", eol))
 

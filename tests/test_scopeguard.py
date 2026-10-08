@@ -978,6 +978,7 @@ def test_escalation_names_the_other_extensions_hooks_it_skips(tmp_path):
         "\n  - extension: git\n    command: speckit.git.commit\n    enabled: true   # on\n    optional: true\n"
         "  - extension: agent-context\n    command: speckit.agent-context.update\n    optional: false\n"
         "  - extension: other\n    command: speckit.other.thing\n    enabled: false\n"
+        "  - extension: gated\n    command: speckit.gated.thing\n    condition: config.gated.on == true\n"
         "  before_tasks:\n")), encoding="utf-8")
     names = ("NOT RUN: /speckit.plan ends here, so these after_plan hooks of other extensions do not run: "
              "git: speckit.git.commit (optional); agent-context: speckit.agent-context.update. Tell the user; they run "
