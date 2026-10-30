@@ -1,6 +1,7 @@
 # The scope stamp: implementation plan
 
-> Status: WP1 (scopeGuard 0.5.0) implemented on 2026-10-30; WP2 to WP4 follow in the sibling repositories.
+> Status: implemented on 2026-10-30 in all four repositories (WP1 scopeGuard 0.5.0, WP2 archiGuard 0.1.2,
+> WP3 Guardians 0.1.3, WP4 auditGuard unreleased). Releases (the tags) are the remaining step, in the order of §5.
 > Target: scopeGuard 0.5.0, archiGuard 0.1.2, Guardians 0.1.3. Two details differ from §3.3 as written:
 > a stamped ID that `spec.md` lost gets one result (`unstamped-drop`), not a second coverage result on top,
 > and the stamp file keeps insertion order rather than sorted keys (still the same bytes for the same input).
