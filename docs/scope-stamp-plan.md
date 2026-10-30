@@ -1,7 +1,9 @@
 # The scope stamp: implementation plan
 
-> Status: proposal, 2026-10-29. Target: scopeGuard 0.5.0, archiGuard 0.1.2, Guardians 0.1.3.
-> This document is the plan; it is not yet implemented. Delete it (or move it to the CHANGELOG) once it is.
+> Status: WP1 (scopeGuard 0.5.0) implemented on 2026-10-30; WP2 to WP4 follow in the sibling repositories.
+> Target: scopeGuard 0.5.0, archiGuard 0.1.2, Guardians 0.1.3. Two details differ from §3.3 as written:
+> a stamped ID that `spec.md` lost gets one result (`unstamped-drop`), not a second coverage result on top,
+> and the stamp file keeps insertion order rather than sorted keys (still the same bytes for the same input).
 
 ## 1. The idea, in one paragraph
 

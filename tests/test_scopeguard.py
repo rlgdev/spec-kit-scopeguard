@@ -838,6 +838,7 @@ def test_preset_wraps_core_commands_with_inline_steps():
         assert "strategy: wrap" in body and body.count("{CORE_TEMPLATE}") == 1
         assert f"{gate} --via inline --iteration N --feature-dir <FEATURE_DIR>" in body
         assert "inventory --via inline" in body and "AUTOCORRECT OFF" in body and "TODO(agent)" in body
+        assert "SCOPE CHANGED AFTER THE STAMP" in body and "/speckit.scopeguard.stamp" in body
         assert "scripts/" not in body.replace(".specify/extensions/scopeguard/scripts/", "")
 
 
@@ -954,3 +955,277 @@ def test_configure_embedded_switches_every_hook_off(tmp_path):
     install_inline_preset(tmp_path)
     proc = run_cli(tmp_path, "configure")
     assert "specify preset remove scopeguard-templates" in proc.stdout
+
+
+# --------------------------------------------------------------------------- the scope stamp
+
+STAMP = "scopeguard-stamp.json"
+
+
+def stamp_of(fd: Path) -> dict:
+    return json.loads((fd / STAMP).read_text(encoding="utf-8"))
+
+
+def spec_without(*ids: str) -> str:
+    """SPEC with the given requirement lines and story sections removed (US3 = the whole section)."""
+    text = SPEC
+    for i in ids:
+        if i == "US3":
+            text = text.split("### User Story 3")[0] + "## Requirements" + text.split("## Requirements", 1)[1]
+        else:
+            text = "\n".join(line for line in text.splitlines() if i not in line) + "\n"
+    return text
+
+
+def test_inventory_stamps_on_first_run_and_is_idempotent(tmp_path):
+    fd = make_feature(tmp_path)
+    proc = run_cli(tmp_path, "inventory", "--feature-dir", "specs/001-demo")
+    assert proc.returncode == 0 and "SCOPE STAMP: stamped now: 7 item(s)" in proc.stdout
+    assert "a change needs the user's re-stamp" in proc.stdout
+    first = (fd / STAMP).read_bytes()
+    data = stamp_of(fd)
+    assert data["tool"] == "scopeguard" and data["format"] == 1 and data["stamped_by"] == "inventory"
+    assert [i["id"] for i in data["items"]] == ["US1", "US2", "US3", "FR-001", "FR-002", "FR-003", "NFR-001"]  # SC is not traced by default
+    assert data["spec"]["sha256"] == sg.sha256_file(fd / "spec.md") and data["spec"]["story_key"] == "US"
+    assert data["tasks"] is None and data["history"][0]["action"] == "stamp"
+    proc = run_cli(tmp_path, "inventory", "--feature-dir", "specs/001-demo", "--json")
+    assert proc.returncode == 0 and (fd / STAMP).read_bytes() == first
+    info = json.loads(proc.stdout)["features"][0]["stamp"]
+    assert info["created"] is False and info["changed"] is False and info["summary"]["items"] == 7
+    # report mode and stamp.enabled: false never write
+    other = make_feature(tmp_path, name="002-other")
+    proc = run_cli(tmp_path, "inventory", "--feature-dir", "specs/002-other", "--report-only")
+    assert proc.returncode == 0 and "SCOPE STAMP: none yet" in proc.stdout and not (other / STAMP).exists()
+    cfg = tmp_path / "off.yml"
+    cfg.write_text("stamp:\n  enabled: false\n", encoding="utf-8")
+    proc = run_cli(tmp_path, "inventory", "--feature-dir", "specs/002-other", "--config", str(cfg))
+    assert proc.returncode == 0 and "SCOPE STAMP: off" in proc.stdout and not (other / STAMP).exists()
+
+
+def test_stamp_command_updates_freely_before_plan(tmp_path):
+    fd = make_feature(tmp_path)
+    proc = run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo")
+    assert proc.returncode == 0 and "stamped now: 3 user stories, 4 requirements" in proc.stdout
+    proc = run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo", "--json")
+    assert proc.returncode == 0 and json.loads(proc.stdout)["features"][0]["verdict"] == "current"
+    (fd / "spec.md").write_text(spec_without("FR-003"), encoding="utf-8")  # clarify before planning
+    proc = run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo")
+    assert proc.returncode == 0 and "- FR-003" in proc.stdout and "re-stamped" in proc.stdout
+    data = stamp_of(fd)
+    assert [e["action"] for e in data["history"]] == ["stamp", "restamp"]
+    assert data["history"][-1]["removed"] == ["FR-003"] and data["history"][-1]["reason"] == "before planning (no plan.md yet)"
+    assert all(i["id"] != "FR-003" for i in data["items"])
+
+
+def test_stamp_command_refuses_change_after_plan_without_reason(tmp_path):
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS))
+    assert run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo").returncode == 0
+    before = (fd / STAMP).read_bytes()
+    (fd / "spec.md").write_text(spec_without("US3"), encoding="utf-8")
+    proc = run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo", "--json")
+    assert proc.returncode == 1
+    data = json.loads(proc.stdout)
+    assert data["verdict"] == "refused" and data["features"][0]["diff"]["removed"] == ["US3"]
+    assert (fd / STAMP).read_bytes() == before
+    proc = run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo")
+    assert "REFUSED" in proc.stdout and 'stamp --reason' in proc.stdout
+    proc = run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo", "--reason", "PO dropped payments")
+    assert proc.returncode == 0 and "Re-run the plan and tasks gates" in proc.stdout
+    data = stamp_of(fd)
+    assert data["stamped_by"] == "stamp" and data["history"][-1]["reason"] == "PO dropped payments"
+    assert data["history"][-1]["removed"] == ["US3"] and data["tasks"] is None
+
+
+def test_plan_gate_escalates_at_once_when_stamped_id_dropped_from_spec(tmp_path):
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS))
+    assert run_cli(tmp_path, "inventory", "--feature-dir", "specs/001-demo").returncode == 0
+    code, data = gate(tmp_path, "plan", "--iteration", "0")
+    assert code == 0 and data["gates"][0]["stamp"]["items"] == 7 and not data["gates"][0]["unrepairable"]
+    (fd / "spec.md").write_text(spec_without("US3", "FR-003"), encoding="utf-8")
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--iteration", "0")
+    assert proc.returncode == 3
+    assert "SCOPE CHANGED AFTER THE STAMP" in proc.stdout and "removed from spec.md: US3, FR-003" in proc.stdout
+    assert "do not edit spec.md, do not re-stamp" in proc.stdout
+    assert "RESOLVE" not in proc.stdout  # nothing for the agent to resolve
+    code, data = gate(tmp_path, "plan", "--iteration", "0")
+    g = data["gates"][0]
+    assert code == 3 and g["escalated"] and g["unrepairable"] and data["verdict"] == "escalate"
+    result = items(data)
+    assert result["US3"]["code"] == "unstamped-drop" and result["US3"]["repairable"] is False
+    assert result["US3"]["title"] == "Pay with card" and result["FR-003"]["code"] == "unstamped-drop"
+    # the rows plan.md still has for US3 and FR-003 are not reported as unknown IDs on top
+    assert not any("does not define" in f["message"] for f in g["findings"])
+    report = (fd / "scopeguard-escalation-plan.md").read_text(encoding="utf-8")
+    assert "## Scope changed after the stamp" in report and "**US3 removed from spec.md**: Pay with card (P3)" in report
+    assert "stamp --reason" in report and "TODO(agent)" not in report
+    history = json.loads((fd / ".scopeguard" / "history-plan.json").read_text(encoding="utf-8"))
+    assert history["iterations"][0]["unrepairable"] is True and history["iterations"][0]["open"] == ["US3", "FR-003"]
+    # CI style (no --iteration): a plain failure, exit 1
+    code, data = gate(tmp_path, "plan")
+    assert code == 1 and data["verdict"] == "fail"
+    # the person approves the change: the gate passes again, the stale report goes away
+    assert run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo", "--reason", "descoped").returncode == 0
+    code, data = gate(tmp_path, "plan", "--iteration", "0")
+    assert code == 1  # plan.md still has rows for US3 / FR-003, which the spec no longer defines
+    assert any("US3" in f["message"] and "does not define" in f["message"] for f in data["gates"][0]["findings"])
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3") and not r.startswith("| FR-003")]
+    (fd / "plan.md").write_text(plan_with(rows), encoding="utf-8")
+    code, data = gate(tmp_path, "plan", "--iteration", "0")
+    assert code == 0 and not (fd / "scopeguard-escalation-plan.md").exists()
+
+
+def test_added_id_after_stamp_is_violation_by_default_and_warning_when_configured(tmp_path):
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS))
+    assert run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo").returncode == 0
+    (fd / "spec.md").write_text(SPEC.replace("- **NFR-001**", "- **FR-004**: System MUST send receipts.\n- **NFR-001**"), encoding="utf-8")
+    code, data = gate(tmp_path, "plan", "--iteration", "0")
+    g = data["gates"][0]
+    assert code == 3 and g["unrepairable"]
+    added = [f for f in g["findings"] if f["item"] == "FR-004" and "not in the scope stamp" in f["message"]]
+    assert added and added[0]["level"] == "violation" and added[0]["repairable"] is False
+    assert items(data)["FR-004"]["code"] == "missing"  # and the plan still has to cover it, as usual
+    cfg = tmp_path / "cfg.yml"
+    cfg.write_text("stamp:\n  added_ids: warning\n", encoding="utf-8")
+    code, data = gate(tmp_path, "plan", "--iteration", "0", "--config", str(cfg))
+    g = data["gates"][0]
+    assert code == 1 and not g["unrepairable"] and g["next_iteration"] == 1
+    assert [f["level"] for f in g["findings"] if f["item"] == "FR-004"] == ["warning"]
+
+
+def test_text_and_title_changes_after_stamp_are_warnings(tmp_path):
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS))
+    assert run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo").returncode == 0
+    (fd / "spec.md").write_text(SPEC.replace("Text.\n", "More text.\n", 1), encoding="utf-8")
+    code, data = gate(tmp_path, "plan", "--iteration", "0")
+    assert code == 0
+    assert any("text changed after the scope stamp" in f["message"] for f in data["gates"][0]["findings"])
+    (fd / "spec.md").write_text(SPEC.replace("Pay with card", "Pay by card"), encoding="utf-8")
+    code, data = gate(tmp_path, "plan", "--iteration", "0")
+    assert code == 0
+    msgs = [f["message"] for f in data["gates"][0]["findings"]]
+    assert any("US3 was retitled" in m for m in msgs) and not any("text changed" in m for m in msgs)
+
+
+def test_missing_stamp_is_a_warning_and_check_never_writes_one(tmp_path):
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS), tasks=TASKS)
+    proc = run_cli(tmp_path, "check", "--all", "--json")
+    data = json.loads(proc.stdout)
+    assert proc.returncode == 0 and not (fd / STAMP).exists()
+    for g in data["gates"]:
+        assert g["stamp"] is None
+        assert any("no scope stamp yet" in f["message"] for f in g["findings"])
+    code, data = gate(tmp_path, "plan", "--iteration", "0")
+    assert code == 0 and not (fd / STAMP).exists()
+
+
+def test_tasks_gate_seals_carriers_on_pass_but_not_in_report_mode(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| NFR-001")] + ["| NFR-001 | perf | deferred | | later release |"]
+    fd = make_feature(tmp_path, plan=plan_with(rows), tasks=TASKS)
+    assert run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo").returncode == 0
+    code, data = gate(tmp_path, "tasks", "--report-only")
+    assert code == 0 and data["gates"][0]["sealed"] is None and stamp_of(fd)["tasks"] is None
+    proc = run_cli(tmp_path, "tasks", "--feature-dir", "specs/001-demo", "--iteration", "0")
+    assert proc.returncode == 0 and "scope stamp: sealed 8 carrier task(s) of 6 item(s)" in proc.stdout
+    data = stamp_of(fd)
+    assert data["tasks"]["carriers"] == {
+        "FR-001": ["T002"], "FR-002": ["T004"], "FR-003": ["T006"],
+        "US1": ["T002", "T003"], "US2": ["T004", "T005"], "US3": ["T006"],
+    }
+    assert data["tasks"]["waived"] == {"NFR-001": "deferred in plan: later release"}
+    assert data["history"][-1]["action"] == "seal" and data["history"][-1]["carriers"] == 8
+    code, data = gate(tmp_path, "tasks")
+    assert code == 0 and data["gates"][0]["sealed"] == "seal unchanged" and data["gates"][0]["stamp"]["sealed"] is True
+    assert len(stamp_of(fd)["history"]) == 2
+    # a failing tasks gate does not seal
+    (fd / "tasks.md").write_text(TASKS.split("## Phase 5")[0], encoding="utf-8")
+    code, data = gate(tmp_path, "tasks")
+    assert code == 1 and data["gates"][0]["sealed"] is None and stamp_of(fd)["tasks"]["carriers"]["US3"] == ["T006"]
+
+
+def test_implement_gate_checks_sealed_carriers(tmp_path):
+    done = TASKS.replace("- [ ]", "- [x]")
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS), tasks=done)
+    assert run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo").returncode == 0
+    code, data = gate(tmp_path, "implement")
+    assert code == 0 and any("never sealed" in f["message"] for f in data["gates"][0]["findings"])
+    assert gate(tmp_path, "tasks")[0] == 0  # seals
+    code, data = gate(tmp_path, "implement")
+    assert code == 0 and not any("never sealed" in f["message"] for f in data["gates"][0]["findings"])
+    # a sealed carrier removed from tasks.md: US3 and FR-003 lose T006, although other tasks could still "carry" them
+    (fd / "tasks.md").write_text(done.replace("- [x] T006 [US3] Card payment flow (FR-003)\n", "- [x] T007 [US3] Payment stub (FR-003)\n"), encoding="utf-8")
+    code, data = gate(tmp_path, "implement")
+    assert code == 1
+    result = items(data)
+    assert result["US3"]["code"] == "carrier-removed" and "T006" in result["US3"]["detail"]
+    assert result["FR-003"]["code"] == "carrier-removed" and result["US1"]["verdict"] == "pass"
+    # a sealed carrier re-opened is reported as open, as before
+    (fd / "tasks.md").write_text(done.replace("- [x] T006", "- [ ] T006"), encoding="utf-8")
+    code, data = gate(tmp_path, "implement")
+    assert code == 1 and items(data)["US3"]["code"] == "open"
+
+
+def test_stamp_disabled_restores_0_4_behaviour_and_config_is_validated(tmp_path):
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS), tasks=TASKS)
+    assert run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo").returncode == 0
+    (fd / "spec.md").write_text(spec_without("US3", "FR-003"), encoding="utf-8")
+    cfg = tmp_path / "cfg.yml"
+    cfg.write_text("stamp:\n  enabled: false\n", encoding="utf-8")
+    code, data = gate(tmp_path, "plan", "--config", str(cfg), "--iteration", "0")
+    g = data["gates"][0]
+    assert code == 1 and g["stamp"] is None and not g["unrepairable"]
+    assert any("US3" in f["message"] and "does not define" in f["message"] for f in g["findings"])
+    proc = run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo", "--config", str(cfg))
+    assert proc.returncode == 2 and "stamp.enabled is false" in proc.stderr
+    for text, message in (
+        ("stamp:\n  added_ids: maybe\n", "stamp.added_ids must be violation or warning"),
+        ("stamp:\n  freeze: true\n", "stamp: unknown setting(s) freeze"),
+        ("stamp:\n  enabled: sometimes\n", "stamp.enabled"),
+    ):
+        cfg.write_text(text, encoding="utf-8")
+        proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--config", str(cfg))
+        assert proc.returncode == 2 and message in proc.stderr, text
+
+
+def test_scheme_change_after_stamp_is_reported(tmp_path):
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS))
+    assert run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo").returncode == 0
+    cfg = tmp_path / "cfg.yml"
+    cfg.write_text("ids:\n  requirement_prefixes: [FR, NFR, SC]\n", encoding="utf-8")
+    code, data = gate(tmp_path, "plan", "--config", str(cfg))
+    g = data["gates"][0]
+    assert any("another ID scheme" in f["message"] for f in g["findings"])
+    proc = run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo", "--config", str(cfg))
+    assert proc.returncode == 1 and "not comparable" in proc.stdout
+    proc = run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo", "--config", str(cfg), "--reason", "trace SC too")
+    assert proc.returncode == 0 and stamp_of(fd)["spec"]["requirement_prefixes"] == ["FR", "NFR", "SC"]
+    code, data = gate(tmp_path, "plan", "--config", str(cfg))
+    assert not any("another ID scheme" in f["message"] for f in data["gates"][0]["findings"])
+
+
+def test_corrupt_stamp_is_exit_2(tmp_path):
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS))
+    (fd / STAMP).write_text("{not json", encoding="utf-8")
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo")
+    assert proc.returncode == 2 and "cannot read the scope stamp" in proc.stderr
+
+
+def test_report_names_the_stamp_and_dropped_items(tmp_path):
+    fd = make_feature(tmp_path, plan=plan_with(FULL_ROWS), tasks=TASKS)
+    proc = run_cli(tmp_path, "report", "--feature-dir", "specs/001-demo")
+    assert "No scope stamp" in proc.stdout
+    assert run_cli(tmp_path, "stamp", "--feature-dir", "specs/001-demo").returncode == 0
+    assert gate(tmp_path, "tasks")[0] == 0
+    (fd / "spec.md").write_text(spec_without("US3"), encoding="utf-8")
+    proc = run_cli(tmp_path, "report", "--feature-dir", "specs/001-demo")
+    assert "Scope stamp: 7 item(s) stamped" in proc.stdout and "tasks sealed" in proc.stdout
+    assert "| US3 | Pay with card (P3) | DROPPED | DROPPED | DROPPED |" in proc.stdout
+
+
+def test_example_scope_drift_reproduces(tmp_path):
+    example = REPO / "examples" / "scope-drift" / "specs" / "001-team-board"
+    shutil.copytree(example, tmp_path / "specs" / "001-team-board")
+    (tmp_path / ".specify").mkdir()
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-team-board", "--iteration", "0")
+    assert proc.returncode == 3
+    assert "removed from spec.md: US3, FR-004" in proc.stdout
+    assert "ESCALATE: the scope changed after the stamp" in proc.stdout

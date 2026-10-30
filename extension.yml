@@ -3,8 +3,8 @@ schema_version: "1.0"
 extension:
   id: scopeguard
   name: "scopeGuard"
-  version: "0.4.1"
-  description: "Deterministic scope gates that find and resolve user stories or requirements from spec.md dropped by plan or tasks, and escalate with a problem report when they cannot"
+  version: "0.5.0"
+  description: "Deterministic scope gates for Spec Kit: the scope of spec.md is stamped at hand-over, every user story or requirement dropped by plan or tasks is found and resolved, a scope change after the stamp escalates to a person, and the sealed tasks are checked at implement"
   author: "rlgdev"
   repository: https://github.com/rlgdev/spec-kit-scopeguard
   homepage: https://github.com/rlgdev/spec-kit-scopeguard
@@ -29,7 +29,10 @@ provides:
   commands:
     - name: speckit.scopeguard.inventory
       file: commands/speckit.scopeguard.inventory.md
-      description: "List every user story and requirement ID in spec.md and state the scope contract for plan and tasks"
+      description: "List every user story and requirement ID in spec.md and state the scope contract for plan and tasks (stamps the scope on first use)"
+    - name: speckit.scopeguard.stamp
+      file: commands/speckit.scopeguard.stamp.md
+      description: "Stamp the scope of spec.md (IDs and hash) the feature is planned against; re-stamp an approved scope change with the user's reason"
     - name: speckit.scopeguard.plan
       file: commands/speckit.scopeguard.plan.md
       description: "Gate: find spec items missing from plan.md and resolve them in the plan (autocorrect, then escalate)"
@@ -52,7 +55,7 @@ provides:
   config:
     - name: "scopeguard-config.yml"
       template: "config-template.yml"
-      description: "scopeGuard settings: integration (inline, hooks or embedded), autocorrect on/off and iterations, gates, story key and traced ID prefixes, enforce/report mode"
+      description: "scopeGuard settings: integration (inline, hooks or embedded), autocorrect on/off and iterations, gates, the scope stamp, story key and traced ID prefixes, enforce/report mode"
       required: false
 
 hooks:

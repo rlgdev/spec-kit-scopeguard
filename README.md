@@ -7,10 +7,12 @@
 
 **Deterministic scope gates for [GitHub Spec Kit](https://github.com/github/spec-kit).**
 No user story or requirement from `spec.md` can be dropped silently by `/speckit.plan`,
-`/speckit.tasks` or `/speckit.implement`. The scope gate runs as a mandatory step inside
-`/speckit.plan` and `/speckit.tasks`. When an item is missing, the agent puts it back into the plan or
-task list. If that still fails after the configured number of iterations (default 4), the agent
-stops and hands you a problem report. All of this is set in one config file.
+`/speckit.tasks` or `/speckit.implement`. The scope is **stamped** when the spec is handed over to
+Spec Kit, and the scope gate runs as a mandatory step inside `/speckit.plan` and `/speckit.tasks`,
+checking the plan and the tasks against that stamp. When an item is missing, the agent puts it back
+into the plan or task list. If that still fails after the configured number of iterations (default 4),
+the agent stops and hands you a problem report. A change of the spec itself after the stamp is never
+resolved by the agent: the gate stops at once and a person decides. All of this is set in one config file.
 
 ## Why
 
@@ -35,11 +37,14 @@ separate command to run:
 
 | Command | Step | What happens |
 |---------|------|--------------|
-| `/speckit.plan` | **(A) scope inventory**, right after Setup | prints every scope ID and the scope contract the plan must satisfy |
+| `/speckit.plan` | **(A) scope inventory**, right after Setup | **stamps the scope** on its first run (`scopeguard-stamp.json`: the IDs and the hash of `spec.md`), prints every scope ID and the scope contract the plan must satisfy |
 | `/speckit.plan` | **(B) scope gate**, before the post-execution hooks and the Completion Report | every ID needs a row in plan.md's `## Scope Coverage` table: `covered` (with where), or `deferred` (with a reason). Missing items are fixed (autocorrect) |
 | `/speckit.tasks` | **(A) scope inventory**, right after Setup | prints the in-scope IDs (not deferred by the plan) |
-| `/speckit.tasks` | **(B) scope gate**, before the post-execution hooks and the Completion Report | every in-scope story has `[USn]` tasks and every in-scope requirement is named by a task or mapped in tasks.md's coverage table. Missing items are fixed (autocorrect) |
-| after `/speckit.implement` | optional hook → `/speckit.scopeguard.implement` | every task that carries an in-scope item is checked off |
+| `/speckit.tasks` | **(B) scope gate**, before the post-execution hooks and the Completion Report | every in-scope story has `[USn]` tasks and every in-scope requirement is named by a task or mapped in tasks.md's coverage table. Missing items are fixed (autocorrect). On pass, the carrying tasks are **sealed** into the stamp |
+| after `/speckit.implement` | optional hook → `/speckit.scopeguard.implement` | every sealed carrying task still exists and is checked off |
+
+Every gate first compares `spec.md` with the stamp. An ID removed or added after the stamp is a scope
+change: the gate escalates at once instead of asking the agent to resolve it ([The scope stamp](#the-scope-stamp)).
 
 With `integration: hooks` the same gates run as separate scopeGuard commands
 (`/speckit.scopeguard.inventory`, `/speckit.scopeguard.plan`, `/speckit.scopeguard.tasks`). Spec Kit's
@@ -77,6 +82,50 @@ check. Iteration history is kept in
 [`examples/escalation`](examples/escalation) shows a real case, a story that conflicts with the
 constitution, along with the problem report an agent produced for it.
 
+### The scope stamp
+
+The gates above check the plan and the tasks against `spec.md`. On their own they cannot tell whether
+`spec.md` is still the spec that was handed over: delete a user story from it, and every gate passes with
+100 % coverage. The stamp closes that gap.
+
+- **Stamped at hand-over.** The first scope inventory of a feature (step A of `/speckit.plan`, in every
+  integration) writes `specs/<feature>/scopeguard-stamp.json`: every ID `spec.md` defines, its title, and the
+  sha256 of the file. Commit it. `scopeguard stamp` takes it by hand, earlier; while there is no `plan.md`
+  yet the stamp simply follows the spec (`/speckit.clarify` needs no ceremony).
+- **Reviewed after plan and after tasks.** Every gate compares `spec.md` with the stamp. A stamped ID that
+  `spec.md` lost is a violation `unstamped-drop`; an ID that appeared is one too (`stamp.added_ids`,
+  `warning` if you let the spec grow during planning); a retitled ID or a text-only change is a warning.
+  These are **not resolved by the agent**: inside the resolution loop the gate escalates at iteration 0
+  (exit `3`), prints `SCOPE CHANGED AFTER THE STAMP`, and writes the problem report with the two decisions
+  a person can take:
+
+  ```text
+  $ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh stamp
+  scopeGuard 0.5.0 | scope stamp | feature: specs/001-team-board
+    spec.md changed since the stamp of 2026-10-30 08:18:28:
+      - US3  Share a board with teammates  (removed from spec.md)
+      - FR-004  System MUST let the board owner invite teammates by e-mail and revoke access.  (removed from spec.md)
+
+    REFUSED: a scope change after planning needs a reason from the user:
+      stamp --reason "<why the scope changed>"   (then re-run the plan and tasks gates)
+    Not intended? Restore spec.md from git instead.
+  ```
+
+  `stamp --reason "PO descoped sharing on 2026-10-30"` approves the change; the reason is kept in the
+  stamp's `history`, and the plan and tasks gates then check against the new scope. [`examples/scope-drift`](examples/scope-drift)
+  is this case, with the gate output and the problem report.
+- **Sealed after tasks.** When the tasks gate passes it records, per in-scope item, the task IDs that carry
+  it (`tasks.carriers`) and the waived items. From then on the implement gate checks those tasks: a sealed
+  task that is no longer in `tasks.md` is a violation (`carrier-removed`), an open one is reported as
+  before. A re-stamp clears the seal; the next passing tasks gate seals again.
+- **Features planned before 0.5** have no stamp. The gates warn (`no scope stamp yet`) until the next
+  inventory stamps the spec as it is then. CI (`check`) never writes a stamp. `stamp.enabled: false`
+  switches all of this off.
+
+The stamp is a record, not a lock: scopeGuard cannot stop an edit of `spec.md` or of the stamp file, it
+makes the edit visible and blocking. With the [Guardians bundle](https://github.com/rlgdev/spec-kit-guardians)
+archiGuard's edit guard also blocks the agent from both files, and auditGuard records who re-stamped.
+
 ## Install
 
 Requires Spec Kit (`specify-cli`) 0.12.17 or newer. The checker is a single Python file
@@ -87,11 +136,11 @@ From your Spec Kit project root:
 
 ```bash
 # 1. the extension: the checker, its commands and hooks, and the config file
-specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.1/scopeguard.zip
+specify extension add scopeguard --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.5.0/scopeguard.zip
 
 # 2. the preset: makes the gate a step of /speckit.plan and /speckit.tasks,
 #    and adds the "Scope Coverage" tables to the plan and tasks templates
-specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.1/scopeguard-preset.zip
+specify preset add --from https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.5.0/scopeguard-preset.zip
 
 # 3. apply the config (default: gates inline in /speckit.plan and /speckit.tasks, scopeGuard hooks off)
 bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
@@ -100,7 +149,7 @@ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
 ```
 
 Spec Kit asks you to confirm the extension install from a URL (step 1); answer `y`. The preset install (step 2) does not ask. Use `releases/latest/download/...`
-instead of `releases/download/v0.4.1/...` to always get the newest release.
+instead of `releases/download/v0.5.0/...` to always get the newest release.
 
 <details>
 <summary>Install through a catalog (for teams)</summary>
@@ -121,7 +170,8 @@ To upgrade an existing install:
 2. Run `specify preset remove scopeguard-templates` before adding the new preset.
 3. Run step 3 again.
 
-Your `scopeguard-config.yml` is kept. A v0.2 `remediation.max_iterations` setting is still read.
+Your `scopeguard-config.yml` is kept. A v0.2 `remediation.max_iterations` setting is still read. Features
+in flight have no scope stamp yet: the gates warn until their next inventory stamps the spec as it is then.
 
 Check it worked: `configure` prints `integration: inline`, and the hook table shows the plan and tasks
 hooks `off`. Then use Spec Kit as usual: `/speckit.plan` and `/speckit.tasks` now include the scope
@@ -133,7 +183,7 @@ From [`examples/missing-story`](examples/missing-story). The plan in this exampl
 
 ```text
 $ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh plan
-scopeGuard 0.4.1 | gate: plan | feature: specs/001-team-board
+scopeGuard 0.5.0 | gate: plan | feature: specs/001-team-board
 spec scope: 4 user stories, 7 requirements
 
   [FAIL]   US3      Share a board with teammates (P2)
@@ -159,10 +209,11 @@ the path of the problem report).
 
 | Command | What it does |
 |---------|--------------|
-| `/speckit.scopeguard.inventory` | Lists every user story and requirement ID in `spec.md` and the scope contract. Prints a ready-made coverage table if the plan has none yet. |
+| `/speckit.scopeguard.inventory` | Lists every user story and requirement ID in `spec.md` and the scope contract; stamps the scope on its first run. Prints a ready-made coverage table if the plan has none yet. |
+| `/speckit.scopeguard.stamp` | Stamps the scope by hand, or re-stamps an approved scope change with the user's reason. |
 | `/speckit.scopeguard.plan` | Plan gate as a separate command: resolves missing items in the plan, escalates after the autocorrect limit. The hook in `integration: hooks`; can also be run by hand. |
 | `/speckit.scopeguard.tasks` | Tasks gate as a separate command: adds tasks for missing items, escalates after the autocorrect limit. |
-| `/speckit.scopeguard.implement` | Implement gate. |
+| `/speckit.scopeguard.implement` | Implement gate: every sealed carrying task exists and is checked off. |
 | `/speckit.scopeguard.report` | Coverage matrix for every item across plan / tasks / implement. Also saved as `scopeguard-report.md` in the feature directory. |
 | `/speckit.scopeguard.compare` | Compares two feature directories, for example two runs of the same spec, item by item. |
 | `/speckit.scopeguard.configure` | Shows and applies the config: inline or hooks, autocorrect, gates. |
@@ -178,8 +229,8 @@ pwsh .specify/extensions/scopeguard/scripts/powershell/scopeguard.ps1 <command> 
 python .specify/extensions/scopeguard/scripts/python/scopeguard.py <command> [options]
 ```
 
-Commands: `inventory`, `plan`, `tasks`, `implement`, `check` (every gate whose artifact exists; add
-`--implement` to include that gate), `report`, `compare DIR_A DIR_B`, `configure [--dry-run]`.
+Commands: `inventory`, `stamp [--reason TEXT]`, `plan`, `tasks`, `implement`, `check` (every gate whose
+artifact exists; add `--implement` to include that gate), `report`, `compare DIR_A DIR_B`, `configure [--dry-run]`.
 Options: `--feature-dir specs/<feature>`, `--all`, `--json`, `--format md`, `--out FILE [--append]`,
 `--save`, `--verbose`, `--report-only`, `--config FILE`, `--iteration N` (resolution loop; exit `3` and
 a problem report once `N` reaches `autocorrect.max_iterations`), `--via inline|hook` (used by the inline
@@ -243,6 +294,10 @@ tasks:
 implement:
   enabled: true          # the optional after_implement check
 
+stamp:
+  enabled: true          # false = nothing is stamped; the gates read spec.md as it is now
+  added_ids: violation   # an ID that appeared after the stamp: violation | warning
+
 ids:
   story_key: US                     # or UC: use cases (UC-001, task labels [UC-001]) instead of user stories
   story_name: null                  # e.g. "Use Case" for headings like "### Use Case 2 - ..."
@@ -259,7 +314,7 @@ off, run `configure`. It switches the matching scopeGuard hooks on or off in
 
 ```text
 $ bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh configure
-scopeGuard 0.4.1 | configure
+scopeGuard 0.5.0 | configure
 config: .specify/extensions/scopeguard/scopeguard-config.yml
 
   integration   : inline
@@ -315,7 +370,7 @@ writes the report to the job summary:
 
 ```yaml
 - uses: actions/checkout@v5
-- uses: rlgdev/spec-kit-scopeguard@v0.4.1
+- uses: rlgdev/spec-kit-scopeguard@v0.5.0
   with:
     command: check        # check | plan | tasks | implement | report
     features: all         # or specs/001-my-feature
@@ -358,6 +413,8 @@ per-run record. To measure without blocking anyone, set `mode: report`.
 
 - It proves that **every scope item is accounted for** at each phase, and that every omission
   is either a violation or a deferral with a reason.
+- It proves that the scope a feature is planned, tasked and implemented against is **the scope it was
+  handed over with**, or that a person wrote down why it changed (the stamp and its history).
 - It does **not** judge whether the plan handles an item *well*, or whether a ticked task is really
   done. A `covered` row whose reference points nowhere still needs a human reviewer. The
   *Plan reference* column makes that review quick.

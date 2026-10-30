@@ -1,0 +1,110 @@
+{
+  "tool": "scopeguard",
+  "version": "0.5.0",
+  "format": 1,
+  "feature_dir": "specs/001-team-board",
+  "stamped_at": "2026-10-30 08:20:43",
+  "stamped_by": "stamp",
+  "spec": {
+    "sha256": "fe06b1d0a1a444f8a424418800a8f721bea8a69526f394b58da8ef2e1ada858c",
+    "story_key": "US",
+    "story_name": "User Story",
+    "story_pattern": "(?:User\\s+Story|US)\\s*[-#:]?\\s*(\\d+)\\b",
+    "requirement_prefixes": [
+      "FR",
+      "NFR"
+    ]
+  },
+  "items": [
+    {
+      "id": "US1",
+      "kind": "story",
+      "title": "Create a board and add cards",
+      "priority": "P1"
+    },
+    {
+      "id": "US2",
+      "kind": "story",
+      "title": "Move cards between columns",
+      "priority": "P1"
+    },
+    {
+      "id": "US3",
+      "kind": "story",
+      "title": "Share a board with teammates",
+      "priority": "P2"
+    },
+    {
+      "id": "US4",
+      "kind": "story",
+      "title": "Notifications about changes",
+      "priority": "P3"
+    },
+    {
+      "id": "FR-001",
+      "kind": "requirement",
+      "title": "System MUST let a signed-in user create a board with the columns To do, Doing and Done.",
+      "priority": null
+    },
+    {
+      "id": "FR-002",
+      "kind": "requirement",
+      "title": "System MUST let board members add, edit and delete cards with a title (max 120 characters) and an optional description.",
+      "priority": null
+    },
+    {
+      "id": "FR-003",
+      "kind": "requirement",
+      "title": "System MUST let board members move cards between columns and persist the new position.",
+      "priority": null
+    },
+    {
+      "id": "FR-004",
+      "kind": "requirement",
+      "title": "System MUST let the board owner invite teammates by e-mail and revoke access.",
+      "priority": null
+    },
+    {
+      "id": "FR-005",
+      "kind": "requirement",
+      "title": "System MUST restrict board access to the owner and invited members.",
+      "priority": null
+    },
+    {
+      "id": "FR-006",
+      "kind": "requirement",
+      "title": "System MUST notify a card's assignee in-app when that card is moved or edited.",
+      "priority": null
+    },
+    {
+      "id": "FR-007",
+      "kind": "requirement",
+      "title": "System MUST keep a per-card history of column changes.",
+      "priority": null
+    }
+  ],
+  "tasks": null,
+  "history": [
+    {
+      "at": "2026-10-30 08:20:43",
+      "action": "stamp",
+      "by": "stamp",
+      "spec_sha256": "fe06b1d0a1a444f8a424418800a8f721bea8a69526f394b58da8ef2e1ada858c",
+      "added": [
+        "US1",
+        "US2",
+        "US3",
+        "US4",
+        "FR-001",
+        "FR-002",
+        "FR-003",
+        "FR-004",
+        "FR-005",
+        "FR-006",
+        "FR-007"
+      ],
+      "removed": [],
+      "reason": null
+    }
+  ]
+}

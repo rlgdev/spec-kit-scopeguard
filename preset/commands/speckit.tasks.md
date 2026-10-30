@@ -35,6 +35,7 @@ Run the scopeGuard checker from the repository root. Use the variant that matche
 What to do with the result:
 
 - **It prints `skipped`.** scopeGuard runs through hooks in this project. Continue normally and skip step B.
+- **The `SCOPE STAMP` block says `spec.md differs from the stamp`** with removed (`-`) or added (`+`) IDs. The scope changed after the hand-over. Do not generate tasks against the changed spec, do not edit `spec.md` or the stamp: report the changed IDs to the user, say that a person decides (`/speckit.scopeguard.stamp` with a reason, or restore `spec.md`), and **end the command here**.
 - **It prints the scope list.** Every ID shown with a `[plan: ...]` status other than `deferred` must be carried by at least one task:
   - user stories by tasks labelled `[USn]`;
   - requirements by naming the ID in a task description, for example `(FR-003)`, or by a row in the `## Scope Coverage` table of `tasks.md`.
@@ -46,7 +47,7 @@ The script decides; you resolve. Exit codes: **0** pass (or skipped), **1** reso
 
 1. **Check.** Run the same checker with `tasks --via inline --iteration N --feature-dir <FEATURE_DIR>` (for example `bash .specify/extensions/scopeguard/scripts/bash/scopeguard.sh tasks --via inline --iteration N --feature-dir <FEATURE_DIR>`). Keep the exit code and the full output.
 
-2. **Exit 0: pass.** Add one line to your Completion Report, for example `scopeGuard: PASS after N resolution iteration(s) (10 carried, 1 waived)`, and list waived items and warnings as printed. Continue with the Mandatory Post-Execution Hooks and the Completion Report.
+2. **Exit 0: pass.** Add one line to your Completion Report, for example `scopeGuard: PASS after N resolution iteration(s) (10 carried, 1 waived)`, and list waived items and warnings as printed. The output's `scope stamp: sealed ...` line means the carrying tasks are now recorded in the stamp for the implement gate; mention it. Continue with the Mandatory Post-Execution Hooks and the Completion Report.
 
 3. **Exit 1: resolve.** The output lists every open item under `RESOLVE`, each with its text from `spec.md`. Resolve **all** of them, then set `N = N + 1` and go back to step 1.
    - **User story without tasks:** add a phase for it in priority order, in the existing format.
@@ -60,6 +61,7 @@ The script decides; you resolve. Exit codes: **0** pass (or skipped), **1** reso
    - Keep a short note of what you changed per item in each iteration.
 
 4. **Exit 3: escalate or stop.** Stop resolving.
+   - If the output says `SCOPE CHANGED AFTER THE STAMP`: `spec.md` lost or gained IDs since the scope stamp (`scopeguard-stamp.json`). This is a scope change, not a gap in the task list. Do **not** edit `spec.md`, do **not** re-stamp, do **not** resolve anything. Report to the user: `scopeGuard: SCOPE CHANGED — <removed IDs> removed, <added IDs> added after the stamp`, the path of the problem report (`scopeguard-escalation-tasks.md`) and the two decisions it lists (approve with `/speckit.scopeguard.stamp` and a reason, or restore `spec.md`). **The command ends here**, as below.
    - If the output says `AUTOCORRECT OFF`: report the listed violations to the user.
    - Otherwise:
      1. Open the problem report named in the output (`scopeguard-escalation-tasks.md` in the feature directory).

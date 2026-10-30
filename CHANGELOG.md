@@ -6,6 +6,37 @@ All notable changes to scopeGuard are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-30
+
+### Added
+
+- **The scope stamp.** The scope of a feature is stamped when the specification is handed over to Spec Kit:
+  the first `inventory` (step A of `/speckit.plan`, in every integration) writes `<feature>/scopeguard-stamp.json`
+  with every ID `spec.md` defines, their titles and the file's sha256. The plan, tasks and implement gates compare
+  `spec.md` with the stamp:
+  - a stamped ID that `spec.md` lost is a violation (`unstamped-drop`) **no agent may repair**: with `--iteration`
+    the gate escalates at iteration 0 (exit `3`, `SCOPE CHANGED AFTER THE STAMP`, a problem report without
+    `TODO(agent)`), and the JSON marks the item `"repairable": false` and the gate `"unrepairable": true`;
+  - an ID that appeared after the stamp is a violation too (`stamp.added_ids: violation`, or `warning`);
+  - a retitled ID or a text-only change is a warning; a missing stamp is a warning (features planned before 0.5).
+- `stamp` command and `/speckit.scopeguard.stamp`: stamp by hand, or re-stamp an approved scope change.
+  Before `plan.md` exists the stamp follows the spec; after that a re-stamp needs `--reason` (exit `1` without
+  one) and the reason is kept in the stamp's `history`.
+- **The seal.** When the tasks gate passes it records the carrying task IDs of every in-scope item
+  (`tasks.carriers`) and the waived items in the stamp. The implement gate checks the sealed carriers: one that
+  is no longer in `tasks.md` is a violation (`carrier-removed`). Never in report mode.
+- Config section `stamp:` (`enabled`, `added_ids`); the inventory prints a `SCOPE STAMP` block and one more
+  contract line; the report names the stamp and shows dropped items as `DROPPED`; the `scopeguard-sdd` workflow
+  stamps right after the spec review.
+- `examples/scope-drift`: the planned team-board feature after US3 and FR-004 were deleted from `spec.md`, with
+  the gate output and the problem report.
+
+### Changed
+
+- The command files and the preset wraps tell the agent what to do when the gate reports a scope change: do not
+  edit `spec.md`, do not re-stamp, report the removed and added IDs and the decision to the user, end the command.
+- The preset requires scopeGuard `>=0.5.0`.
+
 ## [0.4.1] - 2026-10-07
 
 ### Added

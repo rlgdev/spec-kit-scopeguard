@@ -12,6 +12,14 @@ still accounted for after each Spec Kit phase:
 * ``tasks``     - every in-scope item is carried by at least one task in tasks.md
 * ``implement`` - every task carrying an in-scope item is checked off
 
+The scope is *stamped* when the specification is handed over to Spec Kit (the
+first ``inventory``, i.e. step A of /speckit.plan): the IDs and the hash of
+spec.md go into ``<feature>/scopeguard-stamp.json``. Every gate compares spec.md
+with the stamp; an ID that vanished or appeared after the stamp is a violation
+no agent may repair (the gate escalates at once; a person re-stamps with a
+reason, ``stamp --reason``). When the tasks gate passes it seals the carrying
+tasks into the stamp, and the implement gate checks those.
+
 Anything missing is a *violation* and the gate exits 1. Deferred items are
 *waived* (visible, never silent). The verdict vocabulary is pass / violation /
 waived.
@@ -28,6 +36,7 @@ from __future__ import annotations
 import argparse
 import copy
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -41,7 +50,7 @@ if sys.version_info < (3, 9):
     sys.stderr.write("scopeGuard: ERROR: Python 3.9 or newer is required\n")
     sys.exit(2)
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 EXIT_PASS = 0
 EXIT_FAIL = 1
@@ -58,6 +67,8 @@ CONFIG_LOCAL_RELATIVES = (
 EXTENSIONS_YML = Path(".specify") / "extensions.yml"
 INLINE_PRESET_DIR = Path(".specify") / "presets" / "scopeguard-templates"
 INLINE_COMMANDS = ("speckit.plan", "speckit.tasks")
+STAMP_FILENAME = "scopeguard-stamp.json"  # in the feature directory, committed
+STAMP_FORMAT = 1
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     # inline:   the gates are mandatory steps inside /speckit.plan and /speckit.tasks
@@ -110,6 +121,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "implement": {
         "enabled": True,
         "check_requirements": True,
+    },
+    "stamp": {
+        # true:  the scope is stamped at the first inventory (<feature>/scopeguard-stamp.json) and every gate
+        #        compares spec.md with the stamp; a changed ID set escalates (a person re-stamps with a reason).
+        # false: 0.4 behaviour - nothing is stamped, the gates read spec.md as it is now.
+        "enabled": True,
+        # An ID spec.md defines that the stamp does not have (the scope grew after the hand-over):
+        # violation | warning. A stamped ID that spec.md lost is always a violation.
+        "added_ids": "violation",
     },
     # How to treat IDs referenced in plan/tasks that spec.md does not define.
     "unknown_ids": "violation",  # violation | warning | ignore
@@ -325,7 +345,7 @@ def load_config(root: Path, explicit: Optional[str]) -> Tuple[Dict[str, Any], Li
         raise ScopeGuardError(
             f"config: unknown setting(s) {', '.join(unknown)} - see config-template.yml for the settings scopeGuard reads"
         )
-    for section in ("autocorrect", "ids", "spec", "plan", "tasks", "implement", "features"):
+    for section in ("autocorrect", "ids", "spec", "plan", "tasks", "implement", "stamp", "features"):
         value = user.get(section)
         if value is None:
             continue
@@ -368,6 +388,9 @@ def load_config(root: Path, explicit: Optional[str]) -> Tuple[Dict[str, Any], Li
         config[gate]["enabled"] = _as_bool(config[gate].get("enabled", True), f"{gate}.enabled")
     if config.get("unknown_ids") not in (VIOLATION, WARNING, "ignore"):
         raise ScopeGuardError("config: unknown_ids must be violation, warning or ignore")
+    config["stamp"]["enabled"] = _as_bool(config["stamp"].get("enabled", True), "stamp.enabled")
+    if config["stamp"].get("added_ids", VIOLATION) not in (VIOLATION, WARNING):
+        raise ScopeGuardError("config: stamp.added_ids must be violation or warning")
     prefixes = config["ids"].get("requirement_prefixes") or []
     if isinstance(prefixes, str):
         prefixes = [prefixes]
@@ -595,9 +618,13 @@ class Finding:
     message: str
     location: Optional[str] = None
     item: Optional[str] = None
+    repairable: bool = True  # False: no agent may fix this (the spec changed after the stamp); a person decides
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"level": self.level, "message": self.message, "location": self.location, "item": self.item}
+        out: Dict[str, Any] = {"level": self.level, "message": self.message, "location": self.location, "item": self.item}
+        if not self.repairable:
+            out["repairable"] = False
+        return out
 
 
 @dataclass
@@ -670,10 +697,11 @@ class ItemResult:
     detail: str
     evidence: List[str] = field(default_factory=list)
     location: Optional[str] = None
-    code: str = ""  # machine-readable reason: missing, open, no-reason, conflict, bad-status, ...
+    code: str = ""  # machine-readable reason: missing, open, no-reason, conflict, bad-status, unstamped-drop, ...
+    repairable: bool = True  # False: the spec changed after the stamp; a person decides, the agent does not resolve
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out: Dict[str, Any] = {
             "id": self.item.display,
             "code": self.code or self.verdict,
             "kind": self.item.kind,
@@ -685,6 +713,9 @@ class ItemResult:
             "location": self.location,
             "spec_excerpt": self.item.excerpt if self.verdict == VIOLATION else None,
         }
+        if not self.repairable:
+            out["repairable"] = False
+        return out
 
 
 @dataclass
@@ -702,10 +733,19 @@ class GateResult:
     autocorrect: bool = True
     escalation_report: Optional[Path] = None
     history: List[Dict[str, Any]] = field(default_factory=list)
+    stamp: Optional["Stamp"] = None
+    carriers: Dict[str, List[str]] = field(default_factory=dict)  # tasks gate: ID -> carrying task IDs (for the seal)
+    waived: Dict[str, str] = field(default_factory=dict)  # tasks gate: ID -> why it is waived (for the seal)
+    sealed: Optional[str] = None  # tasks gate: what the seal did ("sealed N carrier(s)" / "seal unchanged")
 
     @property
     def violations(self) -> List[Any]:
         return [r for r in self.items if r.verdict == VIOLATION] + [f for f in self.findings if f.level == VIOLATION]
+
+    @property
+    def unrepairable(self) -> bool:
+        """True when a violation needs a person (the spec changed after the stamp): no resolve loop."""
+        return any(not v.repairable for v in self.violations)
 
     @property
     def warnings(self) -> List[Finding]:
@@ -1107,6 +1147,252 @@ def load_plan_table(feature_dir: Path, scheme: IdScheme, config: Dict[str, Any])
     return parse_coverage_table(lines, str(config["plan"].get("section") or "Scope Coverage"), scheme, "plan.md"), lines
 
 
+# --------------------------------------------------------------------------- #
+# The scope stamp                                                               #
+# --------------------------------------------------------------------------- #
+
+
+def _now() -> str:
+    from datetime import datetime
+
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def sha256_file(path: Path) -> str:
+    """sha256 of the file's bytes (the same hash archiGuard records for spec.md)."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@dataclass
+class StampItem:
+    display: str
+    kind: str
+    title: str
+    priority: Optional[str]
+
+    def as_scope_item(self, key: str) -> ScopeItem:
+        return ScopeItem(key, self.display, self.kind, self.title, self.priority, 0,
+                         excerpt=f"(no longer in spec.md; the stamp recorded: {self.display} - {self.title})")
+
+
+@dataclass
+class Stamp:
+    """<feature>/scopeguard-stamp.json: the scope as it was when the spec was handed over to Spec Kit."""
+
+    path: Path
+    stamped_at: str
+    stamped_by: str
+    spec_sha256: str
+    ids: Dict[str, Any]  # story_key, story_name, story_pattern, requirement_prefixes
+    items: List[StampItem]
+    tasks: Optional[Dict[str, Any]]  # None until the tasks gate sealed the carriers
+    history: List[Dict[str, Any]]
+
+    @property
+    def scheme(self) -> IdScheme:
+        return IdScheme({"ids": dict(self.ids)})
+
+    def keyed(self) -> Dict[str, StampItem]:
+        """Items by normalized key, under the stamp's own ID scheme."""
+        scheme = self.scheme
+        out: Dict[str, StampItem] = {}
+        for item in self.items:
+            found = scheme.ids_in_cell(item.display)
+            if found:
+                out[found[0][0]] = item
+        return out
+
+    @property
+    def sealed(self) -> bool:
+        return bool(self.tasks and self.tasks.get("carriers") is not None)
+
+    def to_dict(self, root: Optional[Path] = None) -> Dict[str, Any]:
+        return {
+            "tool": TOOL,
+            "version": __version__,
+            "format": STAMP_FORMAT,
+            "feature_dir": rel_path(self.path.parent, root) if root else self.path.parent.name,
+            "stamped_at": self.stamped_at,
+            "stamped_by": self.stamped_by,
+            "spec": {"sha256": self.spec_sha256, **self.ids},
+            "items": [
+                {"id": i.display, "kind": i.kind, "title": i.title, "priority": i.priority} for i in self.items
+            ],
+            "tasks": self.tasks,
+            "history": self.history,
+        }
+
+
+def stamp_path(feature_dir: Path) -> Path:
+    return feature_dir / STAMP_FILENAME
+
+
+def _scheme_record(config: Dict[str, Any]) -> Dict[str, Any]:
+    ids = config["ids"]
+    return {
+        "story_key": ids["story_key"],
+        "story_name": ids["story_name"],
+        "story_pattern": ids["story_pattern"],
+        "requirement_prefixes": list(ids["requirement_prefixes"]),
+    }
+
+
+def load_stamp(feature_dir: Path) -> Optional[Stamp]:
+    path = stamp_path(feature_dir)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(read_text(path))
+        if not isinstance(data, dict) or data.get("tool") != TOOL:
+            raise ValueError("not a scopeGuard stamp")
+        if int(data.get("format", 0)) > STAMP_FORMAT:
+            raise ValueError(f"stamp format {data.get('format')} is newer than this scopeGuard ({STAMP_FORMAT})")
+        spec = dict(data.get("spec") or {})
+        sha = str(spec.pop("sha256", ""))
+        items = [
+            StampItem(str(i["id"]), str(i.get("kind") or "requirement"), str(i.get("title") or ""), i.get("priority"))
+            for i in (data.get("items") or [])
+        ]
+        return Stamp(path, str(data.get("stamped_at") or "?"), str(data.get("stamped_by") or "?"), sha, spec, items,
+                     data.get("tasks"), list(data.get("history") or []))
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise ScopeGuardError(f"cannot read the scope stamp {path.name} in {feature_dir}: {exc} - restore it from git or delete it")
+
+
+def write_stamp(stamp: Stamp, root: Optional[Path] = None) -> None:
+    text = json.dumps(stamp.to_dict(root), indent=2, ensure_ascii=False) + "\n"
+    with open(stamp.path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
+def make_stamp(feature_dir: Path, spec: SpecModel, config: Dict[str, Any], by: str,
+               reason: Optional[str] = None, previous: Optional[Stamp] = None) -> Stamp:
+    """A stamp of spec.md as it is now; with `previous`, its history is carried over and a restamp entry added."""
+    items = [StampItem(i.display, i.kind, i.title, i.priority) for i in spec.items.values()]
+    sha = sha256_file(spec.path)
+    now = _now()
+    history = list(previous.history) if previous else []
+    if previous:
+        diff = diff_stamp(previous, spec, config)
+        entry = {"at": now, "action": "restamp", "by": by, "spec_sha256": sha,
+                 "added": [i.display for i in diff.added], "removed": [i.display for i in diff.removed], "reason": reason}
+    else:
+        entry = {"at": now, "action": "stamp", "by": by, "spec_sha256": sha,
+                 "added": [i.display for i in items], "removed": [], "reason": reason}
+    history.append(entry)
+    # a re-stamp invalidates the seal: the tasks gate seals again on its next pass
+    return Stamp(stamp_path(feature_dir), now, by, sha, _scheme_record(config), items, None, history)
+
+
+@dataclass
+class StampDiff:
+    added: List[ScopeItem]  # in spec.md, not in the stamp
+    removed: List[ScopeItem]  # in the stamp, not in spec.md (as ScopeItems built from the stamp's record)
+    retitled: List[Tuple[ScopeItem, str]]  # (spec item, title the stamp recorded)
+    hash_changed: bool
+    scheme_changed: bool
+
+    @property
+    def ids_changed(self) -> bool:
+        return bool(self.added or self.removed)
+
+    @property
+    def changed(self) -> bool:
+        return self.ids_changed or bool(self.retitled) or self.hash_changed or self.scheme_changed
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "added": [i.display for i in self.added],
+            "removed": [i.display for i in self.removed],
+            "retitled": [{"id": i.display, "was": old, "now": i.title} for i, old in self.retitled],
+            "hash_changed": self.hash_changed,
+            "scheme_changed": self.scheme_changed,
+        }
+
+
+def diff_stamp(stamp: Stamp, spec: SpecModel, config: Dict[str, Any]) -> StampDiff:
+    stamped = stamp.keyed()
+    added = [i for k, i in spec.items.items() if k not in stamped]
+    removed = [s.as_scope_item(k) for k, s in stamped.items() if k not in spec.items]
+    retitled = [(spec.items[k], s.title) for k, s in stamped.items() if k in spec.items and spec.items[k].title != s.title]
+    return StampDiff(
+        added=added, removed=removed, retitled=retitled,
+        hash_changed=sha256_file(spec.path) != stamp.spec_sha256,
+        scheme_changed=(stamp.ids != _scheme_record(config)),
+    )
+
+
+def describe_diff(diff: StampDiff, stamp: Stamp) -> List[str]:
+    out = []
+    if diff.scheme_changed:
+        out.append(f"the stamp traces {stamp.ids.get('story_key')} + {', '.join(stamp.ids.get('requirement_prefixes') or []) or '-'}; "
+                   f"the config now traces something else, so the ID sets are not comparable")
+    for item in diff.removed:
+        out.append(f"- {item.display}  {item.title}  (removed from spec.md)")
+    for item in diff.added:
+        out.append(f"+ {item.display}  {item.title}  (added to spec.md, line {item.line})")
+    for item, old in diff.retitled:
+        out.append(f"~ {item.display}  retitled: {old!r} -> {item.title!r}")
+    if diff.hash_changed and not (diff.added or diff.removed or diff.retitled):
+        out.append("~ spec.md text changed (IDs and titles unchanged)")
+    return out
+
+
+def check_stamp(result: GateResult, spec: SpecModel, config: Dict[str, Any]) -> Set[str]:
+    """Compare spec.md with the stamp and add the drift findings to `result`.
+
+    Returns the keys of stamped IDs that spec.md lost; the gate does not report them as unknown IDs
+    on top (the drop is the finding). Without a stamp the gate warns once and checks spec.md as it is.
+    """
+    if not config["stamp"].get("enabled", True):
+        return set()
+    stamp = load_stamp(result.feature_dir)
+    if stamp is None:
+        result.findings.append(Finding(WARNING, f"no scope stamp yet ({STAMP_FILENAME}: run inventory or stamp); "
+                                                "the gate reads spec.md as it is now", "spec.md"))
+        return set()
+    result.stamp = stamp
+    diff = diff_stamp(stamp, spec, config)
+    when = stamp.stamped_at[:10]
+    for item in diff.removed:
+        result.items.append(ItemResult(
+            item, VIOLATION,
+            f"dropped from spec.md after the scope stamp of {when}; not a planning fix - the user re-stamps "
+            f"(stamp --reason \"...\") or restores spec.md",
+            location="spec.md", code="unstamped-drop", repairable=False,
+        ))
+    level = config["stamp"].get("added_ids", VIOLATION)
+    for item in diff.added:
+        result.findings.append(Finding(
+            level, f"spec.md defines {item.display}, which is not in the scope stamp of {when} (scope grew after the hand-over)",
+            f"spec.md:{item.line}", item.display, repairable=(level != VIOLATION),
+        ))
+    for item, old in diff.retitled:
+        result.findings.append(Finding(WARNING, f"{item.display} was retitled after the scope stamp: {old!r} -> {item.title!r}",
+                                       f"spec.md:{item.line}", item.display))
+    if diff.scheme_changed:
+        result.findings.append(Finding(WARNING, f"the scope stamp was taken with another ID scheme (story key "
+                                                f"{stamp.ids.get('story_key')}, prefixes {', '.join(stamp.ids.get('requirement_prefixes') or []) or '-'}); "
+                                                "re-stamp after a config change", STAMP_FILENAME))
+    elif diff.hash_changed and not (diff.added or diff.removed or diff.retitled):
+        result.findings.append(Finding(WARNING, f"spec.md text changed after the scope stamp of {when} (IDs and titles unchanged)", "spec.md"))
+    return {i.key for i in diff.removed}
+
+
+def seal_tasks(stamp: Stamp, result: GateResult, root: Path) -> str:
+    """Record the carrying tasks of a passing tasks gate in the stamp. Idempotent."""
+    carriers = {k: list(v) for k, v in sorted(result.carriers.items())}
+    waived = dict(sorted(result.waived.items()))
+    if stamp.tasks and stamp.tasks.get("carriers") == carriers and stamp.tasks.get("waived") == waived:
+        return "seal unchanged"
+    now = _now()
+    stamp.tasks = {"sealed_at": now, "carriers": carriers, "waived": waived}
+    stamp.history.append({"at": now, "action": "seal", "by": "tasks gate", "spec_sha256": stamp.spec_sha256,
+                          "carriers": sum(len(v) for v in carriers.values()), "items": len(carriers), "reason": None})
+    write_stamp(stamp, root)
+    return f"sealed {sum(len(v) for v in carriers.values())} carrier task(s) of {len(carriers)} item(s) into {STAMP_FILENAME}"
+
+
 def gate_plan(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config: Dict[str, Any]) -> GateResult:
     cfg = config["plan"]
     plan_path = feature_dir / "plan.md"
@@ -1115,6 +1401,8 @@ def gate_plan(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config: Dict
     table, plan_lines = load_plan_table(feature_dir, scheme, config)
     assert table is not None
     findings: List[Finding] = list(spec.findings) + list(table.findings)
+    result = GateResult("plan", feature_dir, spec, [], findings)
+    dropped = check_stamp(result, spec, config)
     results: List[ItemResult] = []
     section = cfg.get("section") or "Scope Coverage"
     index = table.index()
@@ -1178,12 +1466,12 @@ def gate_plan(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config: Dict
 
     for row in table.rows:
         for key, display in row.keys:
-            if key not in spec.items:
+            if key not in spec.items and key not in dropped:
                 finding = _unknown_finding(config, display, "plan.md Scope Coverage", f"plan.md:{row.line}")
                 if finding:
                     findings.append(finding)
 
-    result = GateResult("plan", feature_dir, spec, results, findings)
+    result.items.extend(results)
     if missing:
         result.skeleton_target = f'plan.md "## {section}"'
         result.skeleton = ([] if table.found_section else [f"## {section}", ""] + plan_skeleton_header()) + [
@@ -1220,6 +1508,8 @@ def gate_tasks(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config: Dic
     tasks_path = feature_dir / "tasks.md"
     model = parse_tasks(tasks_path, scheme, config)
     findings: List[Finding] = list(spec.findings) + list(model.findings)
+    result = GateResult("tasks", feature_dir, spec, [], findings)
+    dropped = check_stamp(result, spec, config)
     plan_waivers = _plan_waivers(feature_dir, scheme, config)
     table_index = model.table.index()
     results: List[ItemResult] = []
@@ -1236,9 +1526,11 @@ def gate_tasks(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config: Dic
             if task_ids:
                 findings.append(Finding(WARNING, f"{item.display} is deferred in plan.md but tasks.md still carries it ({', '.join(task_ids)})", "tasks.md", item.display))
             results.append(ItemResult(item, WAIVED, f"deferred in plan: {reason}", evidence=task_ids, location=f"plan.md:{waiver.line}"))
+            result.waived[item.display] = f"deferred in plan: {reason}"
             continue
         if task_ids:
             results.append(ItemResult(item, PASS, f"carried by {', '.join(task_ids)}", evidence=task_ids))
+            result.carriers[item.display] = task_ids
             continue
         deferred_row = next((r for r in rows if r.state == "deferred"), None)
         if deferred_row is not None:
@@ -1246,6 +1538,7 @@ def gate_tasks(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config: Dic
                 results.append(ItemResult(item, VIOLATION, "deferred in tasks.md without a reason", location=f"tasks.md:{deferred_row.line}", code="no-reason"))
             else:
                 results.append(ItemResult(item, WAIVED, f"deferred in tasks: {deferred_row.reason or 'no reason given'}", location=f"tasks.md:{deferred_row.line}"))
+                result.waived[item.display] = f"deferred in tasks: {deferred_row.reason or 'no reason given'}"
             continue
         if item.kind == "story":
             detail = f"no task carries {item.display} (expected tasks labelled [{item.display}])"
@@ -1257,17 +1550,17 @@ def gate_tasks(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config: Dic
     # Unknown story labels and requirement IDs.
     for task in model.tasks.values():
         for key in sorted(task.stories | task.requirements):
-            if key not in spec.items:
+            if key not in spec.items and key not in dropped:
                 finding = _unknown_finding(config, task.displays.get(key, key), f"task {task.task_id}", f"tasks.md:{task.line}")
                 if finding:
                     findings.append(finding)
-        if task.inherited_story and task.inherited_story not in spec.items:
+        if task.inherited_story and task.inherited_story not in spec.items and task.inherited_story not in dropped:
             finding = _unknown_finding(config, task.inherited_story, f"task {task.task_id} (via its phase heading)", f"tasks.md:{task.line}")
             if finding:
                 findings.append(finding)
     for row in model.table.rows:
         for key, display in row.keys:
-            if key not in spec.items:
+            if key not in spec.items and key not in dropped:
                 finding = _unknown_finding(config, display, "tasks.md Scope Coverage", f"tasks.md:{row.line}")
                 if finding:
                     findings.append(finding)
@@ -1275,7 +1568,7 @@ def gate_tasks(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config: Dic
             if task_id not in model.tasks:
                 findings.append(Finding(VIOLATION, f"Scope Coverage row maps {', '.join(d for _, d in row.keys)} to {task_id}, which is not a task in tasks.md", f"tasks.md:{row.line}"))
 
-    result = GateResult("tasks", feature_dir, spec, results, findings)
+    result.items.extend(results)
     if missing:
         result.skeleton_target = "tasks.md (add tasks, or rows in its Scope Coverage table)"
         lines = []
@@ -1292,6 +1585,15 @@ def gate_implement(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config:
     cfg = config["implement"]
     model = parse_tasks(feature_dir / "tasks.md", scheme, config)
     findings: List[Finding] = list(spec.findings) + [f for f in model.findings if f.level == VIOLATION]
+    result = GateResult("implement", feature_dir, spec, [], findings)
+    check_stamp(result, spec, config)
+    sealed: Dict[str, List[str]] = {}
+    if result.stamp is not None:
+        if result.stamp.sealed:
+            sealed = {k: list(v) for k, v in (result.stamp.tasks or {}).get("carriers", {}).items()}
+        else:
+            findings.append(Finding(WARNING, "the carrying tasks were never sealed (the tasks gate did not pass with a stamp); "
+                                             "checking tasks.md as it is now", STAMP_FILENAME))
     plan_waivers = _plan_waivers(feature_dir, scheme, config)
     table_index = model.table.index()
     results: List[ItemResult] = []
@@ -1305,6 +1607,13 @@ def gate_implement(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config:
             for task_id in row.task_ids:
                 if task_id in model.tasks:
                     carried[task_id] = model.tasks[task_id]
+        gone = [t for t in sealed.get(item.display, []) if t not in model.tasks]
+        if gone:
+            results.append(ItemResult(item, VIOLATION, f"{', '.join(gone)} sealed as carrying {item.display} by the tasks gate "
+                                                       f"and no longer in tasks.md", evidence=sorted(carried), code="carrier-removed"))
+            continue
+        for task_id in sealed.get(item.display, []):
+            carried[task_id] = model.tasks[task_id]
         if not carried:
             deferred_row = next((r for r in rows if r.state == "deferred"), None)
             if deferred_row is not None:
@@ -1319,7 +1628,8 @@ def gate_implement(feature_dir: Path, spec: SpecModel, scheme: IdScheme, config:
             results.append(ItemResult(item, VIOLATION, f"{len(open_tasks)} of {len(ordered)} tasks still open: {', '.join(open_tasks)}", evidence=evidence, code="open"))
         else:
             results.append(ItemResult(item, PASS, f"all {len(ordered)} tasks done", evidence=evidence))
-    return GateResult("implement", feature_dir, spec, results, findings)
+    result.items.extend(results)
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -1468,12 +1778,16 @@ def render_gate_text(result: GateResult, root: Path, verbose: bool) -> str:
         f"RESULT: {result.verdict.upper()} | {c['violations']} violation(s), {c['pass']} pass, {c['waived']} waived, "
         f"{c['warnings']} warning(s) | coverage {c['pass']}/{c['in_scope']} in-scope items ({c['coverage_pct']}%)"
     )
+    if result.sealed:
+        out.append(f"scope stamp: {result.sealed}")
+    if result.unrepairable:
+        out.extend(_scope_changed_block(result))
     if result.skeleton:
         out.append("")
         out.append(f"To fix, account for each missing item in {result.skeleton_target}:")
         out.extend("  " + line for line in result.skeleton)
     if result.verdict == "fail" and (result.iteration is not None or verbose):
-        to_resolve = [r for r in result.items if r.verdict == VIOLATION]
+        to_resolve = [r for r in result.items if r.verdict == VIOLATION and r.repairable]
         if to_resolve:
             out.append("")
             out.append("RESOLVE - each item below with its text from spec.md:")
@@ -1487,10 +1801,38 @@ def render_gate_text(result: GateResult, root: Path, verbose: bool) -> str:
     return "\n".join(out)
 
 
+def _scope_changed_block(result: GateResult) -> List[str]:
+    stamp = result.stamp
+    when = f"{stamp.stamped_at} by {stamp.stamped_by}" if stamp else "?"
+    removed = [r.item.display for r in result.items if r.code == "unstamped-drop"]
+    added = [f.item for f in result.findings if f.level == VIOLATION and not f.repairable and f.item]
+    out = [
+        "",
+        f"SCOPE CHANGED AFTER THE STAMP (stamped {when}, {STAMP_FILENAME}):",
+    ]
+    if removed:
+        out.append(f"  removed from spec.md: {', '.join(removed)}")
+    if added:
+        out.append(f"  added to spec.md:     {', '.join(added)}")
+    out += [
+        "  This is not something to resolve in the plan or the tasks, and the agent must not edit spec.md or",
+        "  the stamp. A person decides: approve the change with  stamp --reason \"...\"  and re-run the gate,",
+        "  or restore spec.md (git) and re-run the gate.",
+    ]
+    return out
+
+
 def _iteration_line(result: GateResult, root: Path) -> str:
     it, mx = result.iteration, result.max_iterations
     if result.verdict == "pass":
         return f"ITERATION {it} of {mx}: PASS - nothing left to resolve."
+    if result.escalated and result.unrepairable:
+        report = rel_path(result.escalation_report, root) if result.escalation_report else "(not written)"
+        return (
+            "ESCALATE: the scope changed after the stamp (see SCOPE CHANGED AFTER THE STAMP above). STOP: do not "
+            "edit spec.md, do not re-stamp, do not resolve. Report the removed and added items and the decision "
+            f"needed to the user (summary in {report}) and stop the calling command; do not continue as if it succeeded."
+        )
     if result.escalated and not result.autocorrect:
         report = rel_path(result.escalation_report, root) if result.escalation_report else "(not written)"
         return (
@@ -1526,7 +1868,18 @@ def gate_to_dict(result: GateResult, root: Path) -> Dict[str, Any]:
         "next_iteration": (result.iteration + 1) if (result.iteration is not None and result.verdict == "fail" and not result.escalated) else None,
         "escalated": result.escalated,
         "escalation_report": rel_path(result.escalation_report, root) if result.escalation_report else None,
+        "unrepairable": result.unrepairable,
+        "stamp": stamp_summary(result.stamp),
+        "sealed": result.sealed,
     }
+
+
+def stamp_summary(stamp: Optional[Stamp]) -> Optional[Dict[str, Any]]:
+    if stamp is None:
+        return None
+    return {"file": STAMP_FILENAME, "stamped_at": stamp.stamped_at, "stamped_by": stamp.stamped_by,
+            "spec_sha256": stamp.spec_sha256, "items": len(stamp.items), "sealed": stamp.sealed,
+            "sealed_at": (stamp.tasks or {}).get("sealed_at") if stamp.sealed else None}
 
 
 def render_gate_markdown(result: GateResult, root: Path) -> str:
@@ -1560,7 +1913,7 @@ def render_gate_markdown(result: GateResult, root: Path) -> str:
 def _open_ids(result: GateResult) -> List[str]:
     ids = [r.item.display for r in result.items if r.verdict == VIOLATION]
     ids += [f.item or (f.location or "general") for f in result.findings if f.level == VIOLATION]
-    return ids
+    return list(dict.fromkeys(ids))
 
 
 def update_history(result: GateResult) -> List[Dict[str, Any]]:
@@ -1581,6 +1934,7 @@ def update_history(result: GateResult) -> List[Dict[str, Any]]:
         "verdict": result.verdict,
         "violations": len(result.violations),
         "open": _open_ids(result),
+        "unrepairable": result.unrepairable,
     })
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"gate": result.gate, "iterations": entries}, indent=2) + "\n", encoding="utf-8")
@@ -1594,10 +1948,24 @@ def escalation_path(result: GateResult) -> Path:
 def render_escalation(result: GateResult, root: Path) -> str:
     from datetime import datetime
 
-    unresolved = [r for r in result.items if r.verdict == VIOLATION]
-    other = [f for f in result.findings if f.level == VIOLATION]
+    unresolved = [r for r in result.items if r.verdict == VIOLATION and r.repairable]
+    other = [f for f in result.findings if f.level == VIOLATION and f.repairable]
+    dropped = [r for r in result.items if r.verdict == VIOLATION and not r.repairable]
+    added = [f for f in result.findings if f.level == VIOLATION and not f.repairable]
     artifact = {"plan": "plan.md", "tasks": "tasks.md", "implement": "tasks.md"}.get(result.gate, "the artifact")
-    if not result.autocorrect:
+    if result.unrepairable:
+        stamp = result.stamp
+        outcome = (
+            f"the scope changed after the stamp of {stamp.stamped_at if stamp else '?'}: "
+            f"{len(dropped)} stamped item(s) removed from spec.md, {len(added)} item(s) added "
+            f"({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        )
+        intro = (
+            f"The {result.gate} gate found that `spec.md` no longer matches the scope stamp "
+            f"(`{STAMP_FILENAME}`). This is a scope change, not a gap in `{{artifact}}`: the agent does not "
+            "resolve it and must not edit `spec.md` or the stamp. Decide below, then run the gate again."
+        )
+    elif not result.autocorrect:
         outcome = (
             f"{len(unresolved)} scope item(s) missing; autocorrect is off (autocorrect.enabled: false), "
             f"so nothing was resolved ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
@@ -1633,8 +2001,30 @@ def render_escalation(result: GateResult, root: Path) -> str:
         for entry in result.history:
             out.append(f"| {entry.get('iteration')} | {entry.get('violations')} | {', '.join(entry.get('open') or []) or '-'} |")
         out.append("")
+    if dropped or added:
+        stamp = result.stamp
+        out += ["## Scope changed after the stamp", ""]
+        if stamp:
+            out.append(f"- **Stamp**: `{STAMP_FILENAME}`, taken {stamp.stamped_at} by {stamp.stamped_by}, spec.md sha256 `{stamp.spec_sha256[:12]}...`")
+        for r in dropped:
+            title = r.item.title + (f" ({r.item.priority})" if r.item.priority else "")
+            out.append(f"- **{r.item.display} removed from spec.md**: {title}")
+        for f in added:
+            out.append(f"- **{f.item} added to spec.md**: {f.message}" + (f" (`{f.location}`)" if f.location else ""))
+        out += [
+            "",
+            "**Decision needed (a person, not the agent):**",
+            "",
+            "1. The change is intended: approve it with `scopeguard stamp --reason \"<why the scope changed>\"` "
+            "(`/speckit.scopeguard.stamp`), then run the gate again; the plan and the tasks are re-checked against the new scope.",
+            "2. The change is not intended: restore `spec.md` from git, then run the gate again.",
+            "",
+        ]
     if unresolved:
         out += ["## Unresolved items", ""]
+        if result.unrepairable:
+            out += ["These items were not resolved: the gate stopped for the scope decision above. They are re-checked "
+                    "once the gate runs again.", ""]
         for r in unresolved:
             first_open = next((e.get("iteration") for e in result.history if r.item.display in (e.get("open") or [])), result.iteration)
             title = r.item.title + (f" ({r.item.priority})" if r.item.priority else "")
@@ -1647,8 +2037,8 @@ def render_escalation(result: GateResult, root: Path) -> str:
                 "",
             ]
             out += [f"  > {line}" if line.strip() else "  >" for line in (r.item.excerpt or "").split("\n")]
-            if not result.autocorrect:
-                out.append("")
+            if not result.autocorrect or result.unrepairable:
+                out.append("")  # nothing was tried: the gate stopped before resolving
                 continue
             out += [
                 "",
@@ -1676,7 +2066,7 @@ def apply_iteration(result: GateResult, iteration: int, max_iterations: int, roo
     result.max_iterations = max_iterations
     result.history = update_history(result)
     report = escalation_path(result)
-    if result.verdict == "fail" and iteration >= max_iterations:
+    if result.verdict == "fail" and (iteration >= max_iterations or result.unrepairable):
         result.escalated = True
         with open(report, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(render_escalation(result, root))
@@ -1845,8 +2235,21 @@ def configure(root: Path, config: Dict[str, Any], sources: List[str], dry_run: b
 # --------------------------------------------------------------------------- #
 
 
-def inventory(feature_dir: Path, scheme: IdScheme, config: Dict[str, Any]) -> Dict[str, Any]:
+def inventory(feature_dir: Path, scheme: IdScheme, config: Dict[str, Any], root: Path, write: bool = True) -> Dict[str, Any]:
     spec = parse_spec(feature_dir / "spec.md", scheme, config)
+    stamp_info: Optional[Dict[str, Any]] = None
+    if config["stamp"].get("enabled", True):
+        stamp = load_stamp(feature_dir)
+        created = False
+        diff: Optional[StampDiff] = None
+        if stamp is None and write and config["mode"] == "enforce":
+            stamp = make_stamp(feature_dir, spec, config, "inventory")
+            write_stamp(stamp, root)
+            created = True
+        elif stamp is not None:
+            diff = diff_stamp(stamp, spec, config)
+        stamp_info = {"summary": stamp_summary(stamp), "created": created, "diff": diff.to_dict() if diff else None,
+                      "diff_lines": describe_diff(diff, stamp) if (diff and stamp) else [], "changed": bool(diff and diff.changed)}
     waivers = _plan_waivers(feature_dir, scheme, config)
     table, _ = load_plan_table(feature_dir, scheme, config)
     plan_index = table.index() if table else {}
@@ -1862,7 +2265,8 @@ def inventory(feature_dir: Path, scheme: IdScheme, config: Dict[str, Any]) -> Di
             "plan_status": row.state if row else None,
             "in_scope": item.key not in waivers,
         })
-    return {"spec": spec, "items": items, "plan_table_found": bool(table and table.found_section), "plan_rows": len(table.rows) if table else 0}
+    return {"spec": spec, "items": items, "plan_table_found": bool(table and table.found_section),
+            "plan_rows": len(table.rows) if table else 0, "stamp": stamp_info}
 
 
 def render_inventory_text(feature_dir: Path, root: Path, inv: Dict[str, Any], config: Dict[str, Any]) -> str:
@@ -1886,6 +2290,8 @@ def render_inventory_text(feature_dir: Path, root: Path, inv: Dict[str, Any], co
         out.append("")
         for f in spec.findings:
             out.append(f"  {MARK[f.level]} {f.message}" + (f"  ({f.location})" if f.location else ""))
+    out.append("")
+    out.extend(render_stamp_block(inv.get("stamp"), spec))
     section = config["plan"].get("section") or "Scope Coverage"
     out.append("")
     out.append("SCOPE CONTRACT")
@@ -1899,6 +2305,11 @@ def render_inventory_text(feature_dir: Path, root: Path, inv: Dict[str, Any], co
         "requirements by naming the ID in a task description or in tasks.md's Scope Coverage table."
     )
     out.append("- Never renumber, merge or drop IDs from spec.md to make a gate pass.")
+    if inv.get("stamp"):
+        out.append(
+            f"- spec.md is the stamped scope of this feature ({STAMP_FILENAME}): a change needs the user's re-stamp "
+            "(stamp --reason), never an edit by the agent. The gates escalate when spec.md and the stamp differ."
+        )
     if not inv["plan_rows"]:
         out.append("")
         out.append("Starting point for the plan.md coverage table (fill in the Plan reference column):")
@@ -1909,6 +2320,57 @@ def render_inventory_text(feature_dir: Path, root: Path, inv: Dict[str, Any], co
         traced = traced_items(spec, bool(config["plan"].get("check_requirements", True)))
         out.extend(_skeleton_row(i) for i in traced)
     return "\n".join(out)
+
+
+def render_stamp_block(info: Optional[Dict[str, Any]], spec: SpecModel) -> List[str]:
+    if info is None:
+        return ["SCOPE STAMP: off (stamp.enabled: false)"]
+    s = info.get("summary")
+    if s is None:
+        return [f"SCOPE STAMP: none yet ({STAMP_FILENAME}); the spec is stamped at the first inventory in enforce mode"]
+    head = f"SCOPE STAMP: {'stamped now' if info['created'] else 'stamped ' + s['stamped_at'] + ' by ' + s['stamped_by']}"
+    out = [f"{head}: {s['items']} item(s), spec.md sha256 {s['spec_sha256'][:12]}..., "
+           + ("tasks sealed " + str(s["sealed_at"]) if s.get("sealed") else "tasks not sealed yet")]
+    if info.get("changed"):
+        out.append("  spec.md differs from the stamp:")
+        out.extend("    " + line for line in info.get("diff_lines") or [])
+        if (info.get("diff") or {}).get("added") or (info.get("diff") or {}).get("removed"):
+            out.append("  The gates will escalate until a person re-stamps (stamp --reason \"...\") or restores spec.md. "
+                       "Do not plan against the changed spec; report this to the user.")
+    return out
+
+
+def cmd_stamp(feature_dir: Path, scheme: IdScheme, config: Dict[str, Any], root: Path, reason: Optional[str]) -> Tuple[str, Dict[str, Any], int]:
+    """Write or update the scope stamp. Returns (text, json payload, exit code)."""
+    if not config["stamp"].get("enabled", True):
+        raise ScopeGuardError("stamp.enabled is false in the config; nothing to stamp")
+    spec = parse_spec(feature_dir / "spec.md", scheme, config)
+    stamp = load_stamp(feature_dir)
+    head = f"scopeGuard {__version__} | scope stamp | feature: {rel_path(feature_dir, root)}"
+    counts = f"{len(spec.stories)} {spec.stories_label}, {len(spec.requirements)} requirements"
+    if stamp is None:
+        stamp = make_stamp(feature_dir, spec, config, "stamp", reason)
+        write_stamp(stamp, root)
+        text = f"{head}\n  stamped now: {counts}, spec.md sha256 {stamp.spec_sha256[:12]}... -> {rel_path(stamp.path, root)}"
+        return text, {"verdict": "written", "diff": None, "stamp": stamp_summary(stamp)}, EXIT_PASS
+    diff = diff_stamp(stamp, spec, config)
+    if not diff.changed:
+        text = f"{head}\n  scope stamp is current (stamped {stamp.stamped_at} by {stamp.stamped_by}, {counts}, sha256 {stamp.spec_sha256[:12]}...)"
+        return text, {"verdict": "current", "diff": diff.to_dict(), "stamp": stamp_summary(stamp)}, EXIT_PASS
+    lines = [head, f"  spec.md changed since the stamp of {stamp.stamped_at}:"] + ["    " + line for line in describe_diff(diff, stamp)]
+    planned = (feature_dir / "plan.md").is_file()
+    if planned and not reason:
+        lines += ["", "  REFUSED: a scope change after planning needs a reason from the user:",
+                  "    stamp --reason \"<why the scope changed>\"   (then re-run the plan and tasks gates)",
+                  "  Not intended? Restore spec.md from git instead."]
+        return "\n".join(lines), {"verdict": "refused", "diff": diff.to_dict(), "stamp": stamp_summary(stamp)}, EXIT_FAIL
+    stamp = make_stamp(feature_dir, spec, config, "stamp", reason or "before planning (no plan.md yet)", previous=stamp)
+    write_stamp(stamp, root)
+    lines += ["", f"  re-stamped: {counts}, spec.md sha256 {stamp.spec_sha256[:12]}... "
+                  f"(reason: {stamp.history[-1]['reason']})"]
+    if planned:
+        lines.append("  Re-run the plan and tasks gates: the plan and the tasks are now checked against the new scope.")
+    return "\n".join(lines), {"verdict": "written", "diff": diff.to_dict(), "stamp": stamp_summary(stamp)}, EXIT_PASS
 
 
 PHASES = ("plan", "tasks", "implement")
@@ -1922,7 +2384,12 @@ def phase_matrix(feature_dir: Path, scheme: IdScheme, config: Dict[str, Any]) ->
     gates["tasks"] = gate_tasks(feature_dir, spec, scheme, config) if has_tasks else None
     gates["implement"] = gate_implement(feature_dir, spec, scheme, config) if has_tasks else None
     rows = []
-    for item in spec.items.values():
+    listed: List[ScopeItem] = list(spec.items.values())
+    for gate in gates.values():  # stamped items spec.md lost are reported by the gates, not defined by the spec
+        for r in (gate.items if gate else []):
+            if r.item.key not in spec.items and all(i.key != r.item.key for i in listed):
+                listed.append(r.item)
+    for item in listed:
         row = {"id": item.display, "kind": item.kind, "title": item.title, "priority": item.priority}
         for phase in PHASES:
             gate = gates[phase]
@@ -1933,7 +2400,8 @@ def phase_matrix(feature_dir: Path, scheme: IdScheme, config: Dict[str, Any]) ->
     for phase in PHASES:
         gate = gates[phase]
         summary[phase] = gate.counts() if gate else None
-    return {"spec": spec, "rows": rows, "summary": summary, "gates": gates}
+    stamp = load_stamp(feature_dir) if config["stamp"].get("enabled", True) else None
+    return {"spec": spec, "rows": rows, "summary": summary, "gates": gates, "stamp": stamp_summary(stamp)}
 
 
 def _cell(entry: Optional[Dict[str, Any]], phase: str) -> str:
@@ -1951,7 +2419,17 @@ def _cell(entry: Optional[Dict[str, Any]], phase: str) -> str:
         return "OPEN"
     if code == "missing":
         return "MISSING"
+    if code == "unstamped-drop":
+        return "DROPPED"
     return "INVALID"
+
+
+def _stamp_line(summary: Optional[Dict[str, Any]]) -> str:
+    if not summary:
+        return f"No scope stamp (`{STAMP_FILENAME}`)."
+    sealed = f"; tasks sealed {summary['sealed_at']}" if summary.get("sealed") else "; tasks not sealed"
+    return (f"Scope stamp: {summary['items']} item(s) stamped {summary['stamped_at']} by {summary['stamped_by']} "
+            f"(spec.md sha256 `{summary['spec_sha256'][:12]}...`{sealed}).")
 
 
 def render_report_markdown(feature_dir: Path, root: Path, matrix: Dict[str, Any]) -> str:
@@ -1960,6 +2438,7 @@ def render_report_markdown(feature_dir: Path, root: Path, matrix: Dict[str, Any]
         f"## scopeGuard coverage report - `{rel_path(feature_dir, root)}`",
         "",
         f"{len(spec.stories)} {spec.stories_label}, {len(spec.requirements)} requirements traced.",
+        _stamp_line(matrix.get("stamp")),
         "",
         "| Phase | Verdict | Pass | Waived | Violations | Coverage |",
         "|-------|---------|------|--------|------------|----------|",
@@ -2095,7 +2574,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"scopeguard {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
     sub.required = True
-    sub.add_parser("inventory", parents=[common], help="list the scope IDs defined in spec.md and the scope contract")
+    sub.add_parser("inventory", parents=[common], help="list the scope IDs defined in spec.md and the scope contract (stamps the scope on first use)")
+    stamp_parser = sub.add_parser("stamp", parents=[common], help="stamp the scope of spec.md (IDs and hash); re-stamp a changed spec with --reason")
+    stamp_parser.add_argument("--reason", help="why the scope changed (required to re-stamp once plan.md exists)")
     sub.add_parser("plan", parents=[common], help="gate: every spec item is accounted for in plan.md")
     sub.add_parser("tasks", parents=[common], help="gate: every in-scope item is carried by tasks.md")
     sub.add_parser("implement", parents=[common], help="gate: every task carrying an in-scope item is done")
@@ -2200,18 +2681,34 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             payload = []
             texts = []
             for fd in features:
-                inv = inventory(fd, scheme, config)
+                inv = inventory(fd, scheme, config, root)
                 texts.append(render_inventory_text(fd, root, inv, config))
                 payload.append({
                     "feature_dir": rel_path(fd, root),
                     "items": inv["items"],
                     "findings": [f.to_dict() for f in inv["spec"].findings],
+                    "stamp": inv["stamp"],
                 })
             if fmt == "json":
                 print(json.dumps({"tool": TOOL, "version": __version__, "command": "inventory", "features": payload}, indent=2))
             else:
                 print("\n\n".join(texts))
             return EXIT_PASS
+
+        if args.command == "stamp":
+            code = EXIT_PASS
+            texts, payload = [], []
+            for fd in features:
+                text, data, fd_code = cmd_stamp(fd, scheme, config, root, args.reason)
+                texts.append(text)
+                payload.append({"feature_dir": rel_path(fd, root), **data})
+                code = max(code, fd_code)
+            if fmt == "json":
+                print(json.dumps({"tool": TOOL, "version": __version__, "command": "stamp",
+                                  "verdict": "refused" if code else "ok", "features": payload}, indent=2))
+            else:
+                print("\n\n".join(texts))
+            return code
 
         if args.command == "report":
             docs, payload = [], []
@@ -2251,7 +2748,10 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                     print(f"scopeGuard: {gate} gate disabled in config", file=sys.stderr)
                     continue
                 fn = {"plan": gate_plan, "tasks": gate_tasks, "implement": gate_implement}[gate]
-                results.append(fn(fd, spec, scheme, config))
+                result = fn(fd, spec, scheme, config)
+                if gate == "tasks" and result.verdict == "pass" and result.stamp is not None and config["mode"] == "enforce":
+                    result.sealed = seal_tasks(result.stamp, result, root)
+                results.append(result)
 
         if args.iteration is not None:
             if args.iteration < 0:

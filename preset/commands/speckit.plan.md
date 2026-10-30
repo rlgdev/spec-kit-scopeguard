@@ -34,10 +34,11 @@ Run the scopeGuard checker from the repository root. Use the variant that matche
 What to do with the result:
 
 - **It prints `skipped`.** scopeGuard runs through hooks in this project. Continue normally and skip step B.
+- **The `SCOPE STAMP` block says `spec.md differs from the stamp`** with removed (`-`) or added (`+`) IDs. The scope changed after the hand-over. Do not plan against the changed spec, do not edit `spec.md` or the stamp: report the changed IDs to the user, say that a person decides (`/speckit.scopeguard.stamp` with a reason, or restore `spec.md`), and **end the command here**.
 - **It prints the scope list.** It shows every user story and requirement ID of `spec.md`, plus the scope contract. This list is binding for the plan:
   - `plan.md` must end with a `## Scope Coverage` table holding exactly one row per printed ID.
   - Each row is either `covered` (the *Plan reference* says where the plan handles the item) or `deferred` (only when `spec.md` or the user puts the item out of scope, with the reason in the Reason column).
-  - Never renumber, merge, rename or delete IDs in `spec.md`.
+  - Never renumber, merge, rename or delete IDs in `spec.md`: it is the stamped scope of the feature (the `SCOPE STAMP` line; stamped now on the first run).
 - **Exit code 2.** Tell the user scopeGuard could not run (show the message) and continue the command.
 
 ## scopeGuard (B): scope gate (mandatory, before the post-execution hooks and the Completion Report)
@@ -58,6 +59,7 @@ The script decides; you resolve. Exit codes: **0** pass (or skipped), **1** reso
    - Keep a short note of what you changed per item in each iteration.
 
 4. **Exit 3: escalate or stop.** Stop resolving.
+   - If the output says `SCOPE CHANGED AFTER THE STAMP`: `spec.md` lost or gained IDs since the scope stamp (`scopeguard-stamp.json`). This is a scope change, not a gap in the plan. Do **not** edit `spec.md`, do **not** re-stamp, do **not** resolve anything. Report to the user: `scopeGuard: SCOPE CHANGED — <removed IDs> removed, <added IDs> added after the stamp`, the path of the problem report (`scopeguard-escalation-plan.md`) and the two decisions it lists (approve with `/speckit.scopeguard.stamp` and a reason, or restore `spec.md`). **The command ends here**, as below.
    - If the output says `AUTOCORRECT OFF`: report the listed violations to the user.
    - Otherwise:
      1. Open the problem report named in the output (`scopeguard-escalation-plan.md` in the feature directory).

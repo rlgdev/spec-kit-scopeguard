@@ -31,3 +31,24 @@ needed (approve a DPA, defer with a reason, or change the spec).
 cd examples/escalation
 bash ../../scripts/bash/scopeguard.sh plan --iteration 4   # exit 3, writes specs/001-invoicing/scopeguard-escalation-plan.md
 ```
+
+## scope-drift
+
+`specs/001-team-board` was planned completely (every story and requirement is `covered`, FR-007 is deferred
+with a reason) and the scope was stamped: `scopeguard-stamp.json` records the 11 IDs and the hash of
+`spec.md` as they were handed over. Then **User Story 3 and FR-004 were deleted from `spec.md`**, the one
+"fix" that makes every 0.4 gate pass with 100 % coverage.
+
+With the stamp the plan gate reports the two IDs as dropped after the stamp and escalates at once
+(exit `3`), without entering the resolve loop: a scope change is a decision for a person, not something the
+agent resolves in the plan. [`sample-output/plan-gate-output.txt`](scope-drift/sample-output/plan-gate-output.txt)
+is the gate's output and [`sample-output/escalation-report-plan.md`](scope-drift/sample-output/escalation-report-plan.md)
+the problem report it wrote: the removed items, and the two decisions (approve with
+`stamp --reason "..."`, or restore `spec.md`).
+
+```bash
+cd examples/scope-drift
+bash ../../scripts/bash/scopeguard.sh plan --iteration 0      # exit 3: SCOPE CHANGED AFTER THE STAMP: US3, FR-004 removed
+bash ../../scripts/bash/scopeguard.sh stamp                   # exit 1: a re-stamp after planning needs --reason
+bash ../../scripts/bash/scopeguard.sh stamp --reason "PO descoped sharing on 2026-10-30"   # the decision, taken
+```

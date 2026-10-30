@@ -1,0 +1,20 @@
+scopeGuard 0.5.0 | gate: plan | feature: specs/001-team-board
+spec scope: 3 user stories, 6 requirements
+
+  [FAIL]   US3      Share a board with teammates (P2)
+             -> dropped from spec.md after the scope stamp of 2026-10-30; not a planning fix - the user re-stamps (stamp --reason "...") or restores spec.md  (spec.md)
+  [FAIL]   FR-004   System MUST let the board owner invite teammates by e-mai...
+             -> dropped from spec.md after the scope stamp of 2026-10-30; not a planning fix - the user re-stamps (stamp --reason "...") or restores spec.md  (spec.md)
+  [WAIVED] FR-007   System MUST keep a per-card history of column changes.
+             -> deferred: PO decision 2026-10-05: phase 2  (plan.md:56)
+  [PASS]   8 item(s) accounted for (use --verbose to list)
+
+RESULT: FAIL | 2 violation(s), 8 pass, 1 waived, 0 warning(s) | coverage 8/10 in-scope items (80.0%)
+
+SCOPE CHANGED AFTER THE STAMP (stamped 2026-10-30 08:20:43 by stamp, scopeguard-stamp.json):
+  removed from spec.md: US3, FR-004
+  This is not something to resolve in the plan or the tasks, and the agent must not edit spec.md or
+  the stamp. A person decides: approve the change with  stamp --reason "..."  and re-run the gate,
+  or restore spec.md (git) and re-run the gate.
+
+ESCALATE: the scope changed after the stamp (see SCOPE CHANGED AFTER THE STAMP above). STOP: do not edit spec.md, do not re-stamp, do not resolve. Report the removed and added items and the decision needed to the user (summary in specs/001-team-board/scopeguard-escalation-plan.md) and stop the calling command; do not continue as if it succeeded.
