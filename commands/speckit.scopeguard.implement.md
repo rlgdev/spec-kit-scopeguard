@@ -18,7 +18,7 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 Deterministically report which in-scope user stories and requirements still have open tasks after implementation, so a feature is not declared done with scope silently missing. This command is offered as an optional `after_implement` hook and can be run any time.
 
-The gate only reads the checkboxes in `tasks.md`; it does not judge code. Never tick a checkbox to make the gate pass — a task is checked only when its work is actually done.
+The gate only reads the checkboxes in `tasks.md`; it does not judge code. Never tick a checkbox to make the gate pass — a task is checked only when its work is actually done. When the tasks gate sealed the carrying tasks into the scope stamp, those tasks are the contract: a sealed task that is no longer in `tasks.md` (`carrier-removed`) is a finding to report, not a task to re-create or a stamp to edit.
 
 ## Steps
 
@@ -26,6 +26,6 @@ The gate only reads the checkboxes in `tasks.md`; it does not judge code. Never 
 
 2. **Exit code 0 — PASS.** Report one line, for example `scopeGuard implement gate: PASS (all 10 in-scope items done, 1 waived)`. Done.
 
-3. **Exit code 1 — FAIL.** Show the `[FAIL]` lines exactly as printed: each in-scope item with its open tasks. Tell the user the feature is not complete for those items and offer to continue implementing the open tasks. Do not change `tasks.md` checkboxes without doing the work.
+3. **Exit code 1 — FAIL.** Show the `[FAIL]` lines exactly as printed: each in-scope item with its open or removed tasks. Tell the user the feature is not complete for those items and offer to continue implementing the open tasks. Do not change `tasks.md` checkboxes without doing the work. If the output says `SCOPE CHANGED AFTER THE STAMP`, `spec.md` changed after the stamp: report the removed and added IDs to the user; a person decides (`/speckit.scopeguard.stamp` with a reason, or restore `spec.md`).
 
 4. **Exit code 2 — ERROR.** Show the message and the fix (for example no `tasks.md` yet).

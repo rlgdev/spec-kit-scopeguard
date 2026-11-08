@@ -41,6 +41,7 @@ Start with `N = 0`.
    - Keep a short note of what you changed for each item in each iteration; you need it if the gate escalates.
 
 4. **Exit 3 — escalate or stop.** Stop resolving.
+   - If the output says `SCOPE CHANGED AFTER THE STAMP`: `spec.md` lost or gained IDs since the scope stamp. This is a scope change, not a gap in the plan. Do **not** edit `spec.md`, do **not** re-stamp, do **not** resolve anything. Report to the user: `scopeGuard plan gate: SCOPE CHANGED — <removed IDs> removed, <added IDs> added after the stamp`, the path of the problem report (`scopeguard-escalation-plan.md`), and the two decisions it lists (approve with `/speckit.scopeguard.stamp` and a reason, or restore `spec.md`). End the calling command.
    - If the output says `AUTOCORRECT OFF` (autocorrect is switched off in the config), report the listed violations to the user and end the calling command; nothing else to do.
    - Otherwise the gate is still failing after the last allowed iteration (`autocorrect.max_iterations`, 4 by default):
      - Open the problem report named in the output (`scopeguard-escalation-plan.md` in the feature directory) and replace every `TODO(agent)` with: what you attempted for that item in each iteration, the blocker (missing information, conflict with the constitution or another requirement, technical constraint, ...), and the concrete decision needed from the user.

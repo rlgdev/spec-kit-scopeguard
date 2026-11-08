@@ -21,7 +21,7 @@ Make sure the task list carries the whole in-scope part of `spec.md`, and **fix 
 - a user story by tasks labelled `[USn]` (or listed under a `User Story n` phase heading);
 - a requirement by naming its ID in a task description (for example `(FR-003)`), or by a row in the `## Scope Coverage` table of `tasks.md` that maps it to existing task IDs.
 
-This command is the `after_tasks` hook when `integration: hooks` is configured; with the default `integration: inline` (with the scopeguard-templates preset) the same gate runs inside `/speckit.tasks` and this command prints `skipped`. It can also be run by hand. The script decides, you resolve. Exit codes: **0** pass, **1** resolve, **3** escalate, **2** setup error.
+This command is the `after_tasks` hook when `integration: hooks` is configured; with the default `integration: inline` (with the scopeguard-templates preset) the same gate runs inside `/speckit.tasks` and this command prints `skipped`. It can also be run by hand. The script decides, you resolve. Exit codes: **0** pass, **1** resolve, **3** escalate, **2** setup error. When the gate passes it seals the carrying tasks into the scope stamp (`scope stamp: sealed ...` in the output); the implement gate checks those.
 
 ## Steps
 
@@ -41,6 +41,7 @@ Start with `N = 0`.
    - Keep a short note of what you changed for each item in each iteration; you need it if the gate escalates.
 
 4. **Exit 3 — escalate or stop.** Stop resolving.
+   - If the output says `SCOPE CHANGED AFTER THE STAMP`: `spec.md` lost or gained IDs since the scope stamp. This is a scope change, not a gap in the task list. Do **not** edit `spec.md`, do **not** re-stamp, do **not** resolve anything. Report to the user: `scopeGuard tasks gate: SCOPE CHANGED — <removed IDs> removed, <added IDs> added after the stamp`, the path of the problem report (`scopeguard-escalation-tasks.md`) and the two decisions it lists (approve with `/speckit.scopeguard.stamp` and a reason, or restore `spec.md`). End the calling command.
    - If the output says `AUTOCORRECT OFF` (autocorrect is switched off in the config), report the listed violations to the user and end the calling command; nothing else to do.
    - Otherwise the gate is still failing after the last allowed iteration (`autocorrect.max_iterations`, 4 by default):
      - Open the problem report named in the output (`scopeguard-escalation-tasks.md` in the feature directory) and replace every `TODO(agent)` with: what you attempted for that item in each iteration, the blocker, and the concrete decision needed from the user.

@@ -1,15 +1,15 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-10-06T08:00:00Z",
+  "updated_at": "2026-10-30T08:00:00Z",
   "catalog_url": "https://raw.githubusercontent.com/rlgdev/spec-kit-scopeguard/main/catalog/extensions.json",
   "extensions": {
     "scopeguard": {
       "name": "scopeGuard",
       "id": "scopeguard",
-      "description": "Deterministic scope gates that find and resolve user stories or requirements from spec.md dropped by plan or tasks, and escalate with a problem report when they cannot.",
+      "description": "Deterministic scope gates for Spec Kit: the scope of spec.md is stamped at hand-over, every user story or requirement dropped by plan or tasks is found and resolved, a scope change after the stamp escalates to a person, and the sealed tasks are checked at implement.",
       "author": "rlgdev",
-      "version": "0.4.1",
-      "download_url": "https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.4.1/scopeguard.zip",
+      "version": "0.5.0",
+      "download_url": "https://github.com/rlgdev/spec-kit-scopeguard/releases/download/v0.5.0/scopeguard.zip",
       "repository": "https://github.com/rlgdev/spec-kit-scopeguard",
       "homepage": "https://github.com/rlgdev/spec-kit-scopeguard",
       "documentation": "https://github.com/rlgdev/spec-kit-scopeguard/blob/main/README.md",
@@ -21,7 +21,7 @@
         "speckit_version": ">=0.12.17"
       },
       "provides": {
-        "commands": 7,
+        "commands": 8,
         "hooks": 5
       },
       "tags": [
@@ -35,7 +35,7 @@
       "downloads": 0,
       "stars": 0,
       "created_at": "2026-10-05T00:00:00Z",
-      "updated_at": "2026-10-06T08:00:00Z"
+      "updated_at": "2026-10-30T08:00:00Z"
     }
   }
 }

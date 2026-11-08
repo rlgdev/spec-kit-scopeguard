@@ -66,6 +66,20 @@ implement:
   enabled: true
   check_requirements: true
 
+# ── The scope stamp ──────────────────────────────────────────────────────────
+# The scope is stamped when the spec is handed over to Spec Kit: the first inventory (step A of
+# /speckit.plan) writes <feature>/scopeguard-stamp.json with every ID spec.md defines and the file's
+# hash (commit it). Every gate then compares spec.md with the stamp: a stamped ID that spec.md lost
+# is a violation no agent may repair (the gate escalates at once, a person re-stamps with a reason:
+# `stamp --reason "..."`, or restores spec.md). When the tasks gate passes it seals the carrying tasks
+# into the stamp; the implement gate checks those.
+stamp:
+  # false: 0.4 behaviour - nothing is stamped, the gates read spec.md as it is now.
+  enabled: true
+  # An ID spec.md defines that the stamp does not have (the scope grew after the hand-over):
+  # violation (escalates like a removed ID) | warning (noted, the gate goes on).
+  added_ids: violation
+
 # ── What counts as scope ─────────────────────────────────────────────────────
 ids:
   # The key of story IDs. US = Spec Kit user stories ("### User Story 1 - ...", US1, task labels [US1]).
