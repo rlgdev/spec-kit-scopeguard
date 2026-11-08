@@ -823,6 +823,22 @@ def test_configure_keeps_hooks_on_when_inline_preset_missing(tmp_path):
     assert states[("after_plan", "scopeguard", "speckit.scopeguard.plan")] == "true"
 
 
+def test_configure_keeps_crlf_line_endings(tmp_path):
+    """Spec Kit writes .specify/extensions.yml with CRLF on Windows: configure keeps them, so git shows only its edits."""
+    results = {}
+    for eol in ("\n", "\r\n"):
+        root = tmp_path / ("crlf" if eol == "\r\n" else "lf")
+        make_feature(root)
+        yml = root / ".specify" / "extensions.yml"
+        yml.write_bytes(EXTENSIONS_YML.replace("\n", eol).encode("utf-8"))
+        write_config(root, "integration: embedded\n")
+        proc = run_cli(root, "configure")
+        assert proc.returncode == 0, proc.stderr
+        results[eol] = yml.read_bytes()
+    assert results["\n"] != EXTENSIONS_YML.encode("utf-8")                     # configure edited the file
+    assert results["\r\n"] == results["\n"].replace(b"\n", b"\r\n")             # the same edit, line endings kept
+
+
 def test_configure_without_extension_registry_is_error(tmp_path):
     make_feature(tmp_path)
     proc = run_cli(tmp_path, "configure")
@@ -936,6 +952,43 @@ def test_embedded_integration_skips_hooks_and_inline_steps_but_runs_direct_calls
         assert proc.returncode == 0 and "integration is 'embedded'" in proc.stdout, via
     code, data = gate(tmp_path, "plan")              # the embedding tool calls the command line directly
     assert code == 1 and "US3" in items(data)
+
+
+def test_embedded_without_archiguard_says_no_scope_gate_runs(tmp_path):
+    make_feature(tmp_path)
+    (tmp_path / ".specify" / "extensions.yml").write_text(EXTENSIONS_YML, encoding="utf-8")
+    write_config(tmp_path, "integration: embedded\n")
+    warning = "archiGuard, the tool that runs the scope gate, is not installed, so no scope gate runs"
+    proc = run_cli(tmp_path, "configure")
+    assert proc.returncode == 0 and f"NOTE: integration is 'embedded' but {warning}" in proc.stdout
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "inline")
+    assert proc.returncode == 0 and "skipped here" in proc.stdout and warning in proc.stdout
+    manifest = tmp_path / ".specify" / "extensions" / "archiguard" / "extension.yml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("extension:\n  id: archiguard\n", encoding="utf-8")
+    assert warning not in run_cli(tmp_path, "configure").stdout
+
+
+def test_escalation_names_the_other_extensions_hooks_it_skips(tmp_path):
+    rows = [r for r in FULL_ROWS if not r.startswith("| US3")]
+    make_feature(tmp_path, plan=plan_with(rows))
+    install_inline_preset(tmp_path)
+    assert EXTENSIONS_YML.count("\n  before_tasks:\n") == 1
+    (tmp_path / ".specify" / "extensions.yml").write_text(EXTENSIONS_YML.replace("\n  before_tasks:\n", (
+        "\n  - extension: git\n    command: speckit.git.commit\n    enabled: true   # on\n    optional: true\n"
+        "  - extension: agent-context\n    command: speckit.agent-context.update\n    optional: false\n"
+        "  - extension: other\n    command: speckit.other.thing\n    enabled: false\n"
+        "  - extension: gated\n    command: speckit.gated.thing\n    condition: config.gated.on == true\n"
+        "  before_tasks:\n")), encoding="utf-8")
+    names = ("NOT RUN: /speckit.plan ends here, so these after_plan hooks of other extensions do not run: "
+             "git: speckit.git.commit (optional); agent-context: speckit.agent-context.update. Tell the user; they run "
+             "when the command is run again and passes.")
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "inline", "--iteration", "0")
+    assert proc.returncode == 1 and "NOT RUN" not in proc.stdout          # resolving: the command goes on
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--via", "inline", "--iteration", "4")
+    assert proc.returncode == 3 and names in proc.stdout, proc.stdout
+    proc = run_cli(tmp_path, "plan", "--feature-dir", "specs/001-demo", "--iteration", "4")
+    assert proc.returncode == 3 and "NOT RUN" not in proc.stdout          # by hand: no command is stopped
 
 
 def test_configure_embedded_switches_every_hook_off(tmp_path):
